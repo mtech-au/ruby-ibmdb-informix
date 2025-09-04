@@ -3021,7 +3021,9 @@ module ActiveRecord
             conditions << "tabname = #{quote(name.upcase)}" if name
             sql << " #{conditions.join(' AND ')}"
           end
-          sql << " AND owner = #{quote(@schema.upcase)}"
+          #Mtech - schema is case-sensitive in IDS
+          # sql << " AND owner = #{quote(@schema.upcase)}"
+          sql << " AND owner = #{quote(@schema)}"
         else
           sql = +'SELECT tabname FROM (SELECT tabname, type FROM syscat.tables '
           sql << " WHERE tabschema = #{quote(@schema.upcase)}) subquery"
