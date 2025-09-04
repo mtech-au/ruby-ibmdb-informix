@@ -2660,29 +2660,18 @@ module ActiveRecord
         # +columns+ will contain the resulting array
         columns = []
         # Statement required to access all the columns information
-
-        # mtech 04sep2025
-        # Informix does not support the function IBM_DB.columns
-        # so needs to query syscolumns directly
-        if @servertype.instance_of? IBM_IDS
-          sql = "select *
-                from syscolumns as sc
-                inner join systables as st
-                  on sc.tabid = st.tabid
-                where st.tabname = #{quote(table_name.upcase)}"
-          stmt = select_prepared(sql)
-          puts_log "SYSIBM.SQLCOLUMNS = #{stmt.rows}"
-        else
-          stmt = IBM_DB.columns(@connection, nil,
-                                @servertype.set_case(@schema),
-                                @servertype.set_case(table_name))
-          #       sql = "select * from sysibm.sqlcolumns where table_name = #{quote(table_name.upcase)}"
-        end
-
+        stmt = IBM_DB.columns(@connection, nil,
+                              @servertype.set_case(@schema),
+                              @servertype.set_case(table_name))
+        #       sql = "select * from sysibm.sqlcolumns where table_name = #{quote(table_name.upcase)}"
         if @debug == true
-          sql = "select * from syscat.columns  where tabname = #{quote(table_name.upcase)}"
-          puts_log "SYSIBM.SQLCOLUMNS = #{execute_without_logging(sql).rows}"
+          # Mtech - IDS does not have syscat.columns
+          unless @servertype.instance_of? IBM_IDS
+            sql = "select * from syscat.columns  where tabname = #{quote(table_name.upcase)}"
+            puts_log "SYSIBM.SQLCOLUMNS = #{execute_without_logging(sql).rows}"
+          end
         end
+
 
         pri_key = primary_key(table_name)
 
