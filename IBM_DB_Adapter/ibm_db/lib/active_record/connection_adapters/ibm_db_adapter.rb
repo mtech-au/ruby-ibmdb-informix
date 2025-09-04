@@ -2505,11 +2505,16 @@ module ActiveRecord
 
               next if is_composite
 
-              sql = "select remarks from syscat.indexes where tabname = #{quote(table_name.upcase)} and indname = #{quote(index_stats[5])}"
-              comment = single_value_from_rows(execute_without_logging(sql, "SCHEMA").rows)
+              # Mtech - syscat.indexes does not exist in IDS
+              if @servertype.instance_of? IBM_IDS
+                indexes << IndexDefinition.new(table_name, index_name, index_unique, index_columns)
+              else
+                sql = "select remarks from syscat.indexes where tabname = #{quote(table_name.upcase)} and indname = #{quote(index_stats[5])}"
+                comment = single_value_from_rows(execute_without_logging(sql, "SCHEMA").rows)
 
-              indexes << IndexDefinition.new(table_name, index_name, index_unique, index_columns,
-                                             comment: comment)
+                indexes << IndexDefinition.new(table_name, index_name, index_unique, index_columns,
+                                               comment: comment)
+              end
               index_schema << index_qualifier
             end
           rescue StandardError => e # Handle driver fetch errors
@@ -2663,7 +2668,6 @@ module ActiveRecord
         stmt = IBM_DB.columns(@connection, nil,
                               @servertype.set_case(@schema),
                               @servertype.set_case(table_name))
-        puts_log "Mtech 1 #{@servertype.set_case(table_name)}"
         #       sql = "select * from sysibm.sqlcolumns where table_name = #{quote(table_name.upcase)}"
         if @debug == true
           # Mtech - IDS does not have syscat.columns
@@ -2684,7 +2688,12 @@ module ActiveRecord
               rowid = false
               puts_log "def columns fecthed = #{col}"
               column_name = col['column_name'].downcase
-              sql = "select 1 FROM syscat.columns where tabname = #{quote(table_name.upcase)} and generated = 'D' and colname = '#{col['column_name']}'"
+              #Mtech syscat does not exist in informix
+              if @servertype.instance_of? IBM_IDS
+                sql = "select 1 FROM syscolumns as sc inner join systables as st on sc.tabid = st.tabid where sc.colname = '#{column_name}' and st.tabname = #{quote(table_name.upcase)}"
+              else
+                sql = "select 1 FROM syscat.columns where tabname = #{quote(table_name.upcase)} and generated = 'D' and colname = '#{col['column_name']}'"
+              end
               rows = execute_without_logging(sql).rows
               auto_increment = rows.dig(0, 0) == 1 ? true : nil
               puts_log "def columns auto_increment = #{rows}, #{auto_increment}"
@@ -2981,6 +2990,8 @@ module ActiveRecord
       end
 
       def table_comment(table_name) # :nodoc:
+        return nil if @servertype.instance_of? IBM_IDS #Mtech syscat does not exist in IDS
+
         puts_log "table_comment table_name = #{table_name}"
         sql = "select remarks from syscat.tables where tabname = #{quote(table_name.upcase)}"
         single_value_from_rows(execute_without_logging(sql).rows)
@@ -3407,12 +3418,24 @@ module ActiveRecord
         else
           schema_name = @schema
         end
-        unique_info = internal_exec_query(<<~SQL, "SCHEMA")
-          SELECT KEYCOL.CONSTNAME, KEYCOL.COLNAME FROM SYSCAT.KEYCOLUSE KEYCOL
-              INNER JOIN SYSCAT.TABCONST TABCONST ON KEYCOL.CONSTNAME=TABCONST.CONSTNAME
-              WHERE TABCONST.TABSCHEMA=#{quote(schema_name.upcase)} and
-              TABCONST.TABNAME=#{quote(table_name.upcase)} and TABCONST.TYPE='U'
-        SQL
+        #Mtech add of IDS
+        unique_info = if @servertype.instance_of? IBM_IDS # mtech
+                        internal_exec_query(<<~SQL, 'SCHEMA')
+                          SELECT scon.constrname constname, sc.colname colname
+                          FROM sysconstraints scon 
+                          		INNER JOIN systables st ON scon.tabid = st.tabid
+                          		INNER JOIN syscoldepend sd ON scon.constrid = sd.constrid AND scon.tabid = sd.tabid
+                          	 	INNER JOIN syscolumns sc ON sd.tabid = sc.tabid AND sd.colno = sc.colno
+                          WHERE st.tabname = #{quote(table_name)} AND scon.constrtype = 'U';
+                        SQL
+                      else
+                        internal_exec_query(<<~SQL, "SCHEMA")
+                          SELECT KEYCOL.CONSTNAME, KEYCOL.COLNAME FROM SYSCAT.KEYCOLUSE KEYCOL
+                              INNER JOIN SYSCAT.TABCONST TABCONST ON KEYCOL.CONSTNAME=TABCONST.CONSTNAME
+                              WHERE TABCONST.TABSCHEMA=#{quote(schema_name.upcase)} and
+                              TABCONST.TABNAME=#{quote(table_name.upcase)} and TABCONST.TYPE='U'
+                        SQL
+                      end
 
         puts_log "unique_constraints unique_info = #{unique_info.columns}, #{unique_info.rows}"
         unique_info.map do |row|
