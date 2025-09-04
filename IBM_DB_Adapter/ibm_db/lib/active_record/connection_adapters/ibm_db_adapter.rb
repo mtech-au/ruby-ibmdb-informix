@@ -2663,6 +2663,7 @@ module ActiveRecord
         stmt = IBM_DB.columns(@connection, nil,
                               @servertype.set_case(@schema),
                               @servertype.set_case(table_name))
+        puts_log "Mtech 1 #{@servertype.set_case(table_name)}"
         #       sql = "select * from sysibm.sqlcolumns where table_name = #{quote(table_name.upcase)}"
         if @debug == true
           # Mtech - IDS does not have syscat.columns
@@ -3015,15 +3016,15 @@ module ActiveRecord
         puts_log "servertype = #{@servertype}"
         if @servertype.instance_of? IBM_IDS
           sql = "SELECT tabname FROM systables WHERE"
+          sql << " owner = #{quote(@schema)}" #Mtech Edit
           if type || name
             conditions = []
             conditions << "tabtype = #{quote(type.upcase)}" if type
             conditions << "tabname = #{quote(name.upcase)}" if name
             sql << " #{conditions.join(' AND ')}"
           end
-          #Mtech - schema is case-sensitive in IDS
+          #Mtech - moved up and schema is case-sensitive in IDS
           # sql << " AND owner = #{quote(@schema.upcase)}"
-          sql << " AND owner = #{quote(@schema)}"
         else
           sql = +'SELECT tabname FROM (SELECT tabname, type FROM syscat.tables '
           sql << " WHERE tabschema = #{quote(@schema.upcase)}) subquery"
