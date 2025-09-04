@@ -580,11 +580,11 @@ module ActiveRecord
       def valid_primary_key_options # :nodoc:
         [:limit, :default, :precision, :auto_increment]
       end
-      
+
       def valid_column_definition_options # :nodoc:
         ColumnDefinition::OPTION_NAMES + [:auto_increment]
       end
-      
+
       def drop_table(table_name, options = {})
         if options[:if_exists]
           execute("DROP TABLE IF EXISTS #{quote_table_name(table_name)}")
@@ -2660,10 +2660,25 @@ module ActiveRecord
         # +columns+ will contain the resulting array
         columns = []
         # Statement required to access all the columns information
-        stmt = IBM_DB.columns(@connection, nil,
-                              @servertype.set_case(@schema),
-                              @servertype.set_case(table_name))
-        #       sql = "select * from sysibm.sqlcolumns where table_name = #{quote(table_name.upcase)}"
+
+        # mtech 04sep2025
+        # Informix does not support the function IBM_DB.columns
+        # so needs to query syscolumns directly
+        if @servertype.instance_of? IBM_IDS
+          sql = "select *
+                from syscolumns as sc
+                inner join systables as st
+                  on sc.tabid = st.tabid
+                where st.tabname = #{quote(table_name.upcase)}"
+          stmt = select_prepared(sql)
+          puts_log "SYSIBM.SQLCOLUMNS = #{stmt.rows}"
+        else
+          stmt = IBM_DB.columns(@connection, nil,
+                                @servertype.set_case(@schema),
+                                @servertype.set_case(table_name))
+          #       sql = "select * from sysibm.sqlcolumns where table_name = #{quote(table_name.upcase)}"
+        end
+
         if @debug == true
           sql = "select * from syscat.columns  where tabname = #{quote(table_name.upcase)}"
           puts_log "SYSIBM.SQLCOLUMNS = #{execute_without_logging(sql).rows}"
