@@ -443,9 +443,6 @@ module ActiveRecord
 
       if config.has_key?(:parameterized) && config[:parameterized] == true
         set_quoted_literal_replacement = IBM_DB::QUOTED_LITERAL_REPLACEMENT_OFF
-      # mtech - IDS with Rails added elsif
-      elsif config.has_key?(:parameterized) && config[:parameterized] == :informix
-        set_quoted_literal_replacement = IBM_DB::QUOTED_LITERAL_REPLACEMENT_ON
       end
 
       # Extract connection options from the database configuration
@@ -901,11 +898,6 @@ module ActiveRecord
           @pstmt_support_on = true
           @prepared_statements = true
           @set_quoted_literal_replacement = IBM_DB::QUOTED_LITERAL_REPLACEMENT_OFF
-        # mtech - add elseif for Informix on rails
-        elsif config.has_key?(:parameterized) && config[:parameterized] == :informix
-          @pstmt_support_on = true
-          @prepared_statements = true
-          @set_quoted_literal_replacement = IBM_DB::QUOTED_LITERAL_REPLACEMENT_ON
         else
           @pstmt_support_on = false
           @prepared_statements = false
@@ -1667,7 +1659,6 @@ module ActiveRecord
         puts_log 'execute_prepared_stmt'
         puts_log "Param array = #{param_array}"
         param_array = nil if !param_array.nil? && param_array.size < 1
-
         if !IBM_DB.execute(pstmt, param_array)
           error_msg = IBM_DB.getErrormsg(pstmt, IBM_DB::DB_STMT)
           puts_log "Error = #{error_msg}"
@@ -3056,6 +3047,7 @@ module ActiveRecord
             sql << " WHERE #{conditions.join(' AND ')}"
           end
         end
+        puts "mtech debug data_source_sql: #{sql}"
         sql
       end
 
