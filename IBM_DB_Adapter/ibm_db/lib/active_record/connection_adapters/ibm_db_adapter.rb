@@ -2505,7 +2505,7 @@ module ActiveRecord
 
               next if is_composite
 
-              # Mtech - syscat.indexes does not exist in IDS
+              # mtech - syscat.indexes does not exist in IDS
               if @servertype.instance_of? IBM_IDS
                 indexes << IndexDefinition.new(table_name, index_name, index_unique, index_columns)
               else
@@ -2670,7 +2670,7 @@ module ActiveRecord
                               @servertype.set_case(table_name))
         #       sql = "select * from sysibm.sqlcolumns where table_name = #{quote(table_name.upcase)}"
         if @debug == true
-          # Mtech - IDS does not have syscat.columns
+          # mtech - IDS does not have syscat.columns
           unless @servertype.instance_of? IBM_IDS
             sql = "select * from syscat.columns  where tabname = #{quote(table_name.upcase)}"
             puts_log "SYSIBM.SQLCOLUMNS = #{execute_without_logging(sql).rows}"
@@ -2688,7 +2688,7 @@ module ActiveRecord
               rowid = false
               puts_log "def columns fecthed = #{col}"
               column_name = col['column_name'].downcase
-              #Mtech syscat does not exist in informix
+              #mtech syscat does not exist in informix
               if @servertype.instance_of? IBM_IDS
                 sql = "select 1 FROM syscolumns as sc inner join systables as st on sc.tabid = st.tabid where sc.colname = '#{column_name}' and st.tabname = #{quote(table_name.upcase)}"
               else
@@ -2990,7 +2990,7 @@ module ActiveRecord
       end
 
       def table_comment(table_name) # :nodoc:
-        return nil if @servertype.instance_of? IBM_IDS #Mtech syscat does not exist in IDS
+        return nil if @servertype.instance_of? IBM_IDS #mtech syscat does not exist in IDS
 
         puts_log "table_comment table_name = #{table_name}"
         sql = "select remarks from syscat.tables where tabname = #{quote(table_name.upcase)}"
@@ -3026,16 +3026,18 @@ module ActiveRecord
         puts_log 'data_source_sql'
         puts_log "servertype = #{@servertype}"
         if @servertype.instance_of? IBM_IDS
+          #mtech refactor to handle case-sensitive schema in IDS and fix WHERE clause - START
           sql = "SELECT tabname FROM systables WHERE"
+          sql << " owner = #{quote(@schema)}"
           if type || name
             conditions = []
             conditions << "tabtype = #{quote(type.upcase)}" if type
             conditions << "tabname = #{quote(name.upcase)}" if name
-            sql << " #{conditions.join(' AND ')}"
+            # sql << " #{conditions.join(' AND ')}"
+            sql << " AND #{conditions.join(' AND ')}"
           end
-          #Mtech - schema is case-sensitive in IDS
           # sql << " AND owner = #{quote(@schema.upcase)}"
-          sql << " AND owner = #{quote(@schema)}"
+          #mtech refactor - END
         else
           sql = +'SELECT tabname FROM (SELECT tabname, type FROM syscat.tables '
           sql << " WHERE tabschema = #{quote(@schema.upcase)}) subquery"
@@ -3418,7 +3420,7 @@ module ActiveRecord
         else
           schema_name = @schema
         end
-        #Mtech add of IDS
+        #mtech add of IDS
         unique_info = if @servertype.instance_of? IBM_IDS # mtech
                         internal_exec_query(<<~SQL, 'SCHEMA')
                           SELECT scon.constrname constname, sc.colname colname
