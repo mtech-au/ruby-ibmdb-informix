@@ -1777,6 +1777,7 @@ module ActiveRecord
         cols = nil
         results = nil
 
+
         if stmt and sql.strip.upcase.start_with?("SELECT")
           cols = IBM_DB.resultCols(stmt)
 
