@@ -4416,6 +4416,7 @@ module Arel
           end
         end
 
+
         if o.offset && o.limit
           visit_Arel_Nodes_Limit(o.limit, collector)
           visit_Arel_Nodes_Offset(o.offset, collector)
