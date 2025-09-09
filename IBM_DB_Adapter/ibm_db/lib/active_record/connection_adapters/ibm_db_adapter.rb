@@ -2563,7 +2563,9 @@ module ActiveRecord
         when /for bit data/i
           'binary'
         when /smallint/i
-          'boolean'
+          # mtech - db is actually using this as int
+          # 'boolean'
+          'integer'
         when /int|serial/i
           'integer'
         when /decimal|numeric|decfloat/i
