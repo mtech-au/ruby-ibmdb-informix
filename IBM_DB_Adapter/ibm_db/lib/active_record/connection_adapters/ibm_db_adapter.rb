@@ -157,6 +157,13 @@ module ActiveRecord
         HEADER
       end
 
+      #mtech added trailer for schema dump
+      def trailer(stream)
+        stream.puts <<~TRAILER
+          end
+        TRAILER
+      end
+
       def default_primary_key?(column)
         schema_type(column) == :integer
       end
@@ -2689,14 +2696,12 @@ module ActiveRecord
               puts_log "def columns fecthed = #{col}"
               column_name = col['column_name'].downcase
               #mtech syscat does not exist in informix
-              if @servertype.instance_of? IBM_IDS
-                sql = "select 1 FROM syscolumns as sc inner join systables as st on sc.tabid = st.tabid where sc.colname = '#{column_name}' and st.tabname = #{quote(table_name.upcase)}"
-              else
+              unless @servertype.instance_of? IBM_IDS
                 sql = "select 1 FROM syscat.columns where tabname = #{quote(table_name.upcase)} and generated = 'D' and colname = '#{col['column_name']}'"
+                rows = execute_without_logging(sql).rows
+                auto_increment = rows.dig(0, 0) == 1 ? true : nil
+                puts_log "def columns auto_increment = #{rows}, #{auto_increment}"
               end
-              rows = execute_without_logging(sql).rows
-              auto_increment = rows.dig(0, 0) == 1 ? true : nil
-              puts_log "def columns auto_increment = #{rows}, #{auto_increment}"
 
               # Assigns the column default value.
               column_default_value = col['column_def']
@@ -3048,7 +3053,6 @@ module ActiveRecord
             sql << " WHERE #{conditions.join(' AND ')}"
           end
         end
-        puts "mtech debug data_source_sql: #{sql}"
         sql
       end
 
@@ -3624,6 +3628,8 @@ module ActiveRecord
           extensions(stream)
           tables(stream)
           stream
+          # mtech added trailer
+          trailer(stream)
         end
       end
     end # class IBM_DBAdapter
