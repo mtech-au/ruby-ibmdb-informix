@@ -2563,9 +2563,9 @@ module ActiveRecord
         when /for bit data/i
           'binary'
         when /smallint/i
-          # mtech - db is actually using this as int
+          # mtech - IDS supports boolean
           # 'boolean'
-          'integer'
+          @servertype.instance_of?(IBM_IDS) ? 'integer' : 'boolean'
         when /int|serial/i
           'integer'
         when /decimal|numeric|decfloat/i
@@ -2605,7 +2605,9 @@ module ActiveRecord
         when /for bit data/i
           :binary
         when /smallint/i
-          :boolean
+          # mtech - IDS supports boolean
+          # :boolean
+          @servertype.instance_of?(IBM_IDS) ? :integer : :boolean
         when /int|serial/i
           :integer
         when /decimal|numeric|decfloat/i
