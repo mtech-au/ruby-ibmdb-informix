@@ -1513,6 +1513,9 @@ module ActiveRecord
       end
 
       def getTableIdentityColumn(table_name)
+        # mtech - no syscat in ids
+        return nil if @servertype.instance_of?(IBM_IDS)
+
         query = "SELECT COLNAME FROM SYSCAT.COLUMNS WHERE TABNAME = #{quote(table_name.upcase)} AND IDENTITY = 'Y'"
         puts_log "getTableIdentityColumn table_name = #{table_name}, query = #{query}"
         rows = execute_without_logging(query).rows
