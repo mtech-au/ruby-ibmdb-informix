@@ -229,13 +229,18 @@ module ActiveRecord
         if @conn.instance_of? IBM_DBAdapter
           @conn.puts_log "visit_ColumnDefinition #{o.name} #{o} #{@conn} #{@conn.servertype}"
         end
+        #mtech debug
+        puts "begore sql_type for #{o.name} #{o.type} #{o.options}"
         o.sql_type = type_to_sql(o.type, **o.options)
         column_sql = +"#{quote_column_name(o.name)} #{o.sql_type}"
+        #mtech debug
+        puts "after sql_type for #{o.name} #{o.type} #{o.options} sql_type: #{o.sql_type}"
         add_column_options!(column_sql, column_options(o))
         column_sql
       end
 
       def add_column_options!(sql, options)
+
         if options_include_default?(options)
           sql << " DEFAULT #{quote_default_expression(options[:default],
                                                       options[:column])}"
@@ -2212,6 +2217,7 @@ module ActiveRecord
       # IBM data servers do not support limits on certain data types (unlike MySQL)
       # Limit is supported for the {float, decimal, numeric, varchar, clob, blob, graphic, vargraphic} data types.
       def type_to_sql(type, limit = nil, precision = nil, scale = nil)
+
         puts_log 'type_to_sql'
         puts_log "Type = #{type}, Limit = #{limit}"
         puts_log "type_to_sql = #{caller}"
