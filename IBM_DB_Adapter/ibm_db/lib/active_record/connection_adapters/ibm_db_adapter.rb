@@ -229,12 +229,8 @@ module ActiveRecord
         if @conn.instance_of? IBM_DBAdapter
           @conn.puts_log "visit_ColumnDefinition #{o.name} #{o} #{@conn} #{@conn.servertype}"
         end
-        #mtech debug
-        puts "begore sql_type for #{o.name} #{o.type} #{o.options}"
         o.sql_type = type_to_sql(o.type, **o.options)
         column_sql = +"#{quote_column_name(o.name)} #{o.sql_type}"
-        #mtech debug
-        puts "after sql_type for #{o.name} #{o.type} #{o.options} sql_type: #{o.sql_type}"
         add_column_options!(column_sql, column_options(o))
         column_sql
       end
@@ -249,7 +245,9 @@ module ActiveRecord
         # mtech debug
         puts ".. add_column_options! sql: #{sql}, options: #{options}"
 
-        sql << ' PRIMARY KEY' if options[:primary_key] == true
+        # mtech - allow primary key to be specified in column definition
+        # sql << ' PRIMARY KEY' if options[:primary_key] == true
+        sql << ' PRIMARY KEY' if options[:primary_key] == true && sql.exclude?("primary key")
         # must explicitly check for :null to allow change_column to work on migrations
         sql << ' NOT NULL' if options[:null] == false
         sql
