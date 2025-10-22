@@ -15,7 +15,7 @@
 **              Environment Commands - Function Prototypes
 **              Environment Commands - Labels for SQLCODES
 ** 
-** Operating System:Darwin
+** Operating System:LINUX
 ** 
 *******************************************************************************/
 #ifndef SQL_H_SQLENV
@@ -122,6 +122,7 @@ extern "C" {
 #define SQL_NW_PSWD_SZ         128     /* Netware password                    */
 #define SQL_COLLATE_INFO_SZ    260     /* Collate info size (256 + 4)         */
 #define SQL_ACCOUNT_STR_SZ     199     /* Max accounting string               */
+#define SQL_DSCVRCOMM_SZ       35      /* Discover protocols string size      */
 #define SQL_CA_XPORT_DEV_SZ    15      /* CA Transport Device Name            */
 #define SQL_LICVERSION_SZ      8       /* Connect licence version             */
 
@@ -214,14 +215,10 @@ extern "C" {
 
 /* TLS Hostname Validation options                                            */
 #define SQL_HOSTNAME_VALIDATION_OFF    0    /* Hostname validation is off     */
+                                            /* (Default)                      */
 #define SQL_HOSTNAME_VALIDATION_BASIC  1    /* Basic hostname validation      */
                                             /* following RFC6125 is           */
                                             /* performed for TLS connections  */
-                                            /* (Default)                      */
-/* APPTOKEN generation options                                                */
-#define SQL_APPTOKENGEN_OFF            0    /* APPTOKEN generation is off     */
-                                            /* (Default)                      */
-#define SQL_APPTOKENGEN_ON             1    /* APPTOKEN generation is on      */
 
 /* ClientGSKitLocation options                                                */
 #define stock                          1    /* Force GSKit loading by fully   */
@@ -2450,12 +2447,12 @@ SQL_STRUCTURE sqle_addn_options
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Catalog Database              */
   sqlectdd_api (
-        const _SQLOLDCHAR * pDbName,         /* database                      */
-        const _SQLOLDCHAR * pDbAlias,        /* alias                         */
+        _SQLOLDCHAR * pDbName,               /* database                      */
+        _SQLOLDCHAR * pDbAlias,              /* alias                         */
         unsigned char Type,                  /* type                          */
-        const _SQLOLDCHAR * pNodeName,       /* node name                     */
-        const _SQLOLDCHAR * pPath,           /* drive/path                    */
-        const _SQLOLDCHAR * pComment,        /* comment                       */
+        _SQLOLDCHAR * pNodeName,             /* node name                     */
+        _SQLOLDCHAR * pPath,                 /* drive/path                    */
+        _SQLOLDCHAR * pComment,              /* comment                       */
         unsigned short Authentication,       /* authentication                */
         struct sqlca * pSqlca);              /* SQLCA                         */
 
@@ -2698,14 +2695,14 @@ SQL_API_RC SQL_API_FN                        /* Catalog Database              */
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Catalog Database              */
   sqlecadb_api (
-        const _SQLOLDCHAR * pDbName,         /* database                      */
-        const _SQLOLDCHAR * pDbAlias,        /* alias                         */
+        _SQLOLDCHAR * pDbName,               /* database                      */
+        _SQLOLDCHAR * pDbAlias,              /* alias                         */
         unsigned char Type,                  /* type                          */
-        const _SQLOLDCHAR * pNodeName,       /* node name                     */
-        const _SQLOLDCHAR * pPath,           /* drive/path                    */
-        const _SQLOLDCHAR * pComment,        /* comment                       */
+        _SQLOLDCHAR * pNodeName,             /* node name                     */
+        _SQLOLDCHAR * pPath,                 /* drive/path                    */
+        _SQLOLDCHAR * pComment,              /* comment                       */
         unsigned short Authentication,       /* authentication                */
-        const _SQLOLDCHAR * pPrincipal,      /* principal name if auth=DCE    */
+        _SQLOLDCHAR * pPrincipal,            /* principal name if auth=DCE    */
                                              /* or KERBEROS                   */
         struct sqlca * pSqlca);              /* SQLCA                         */
 
@@ -3008,7 +3005,7 @@ SQL_API_RC SQL_API_FN                        /* Get Next Directory Entry      */
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Open Directory Scan           */
   sqledosd_api (
-        const _SQLOLDCHAR * pPath,           /* drive/path                    */
+        _SQLOLDCHAR * pPath,                 /* drive/path                    */
         unsigned short * pHandle,            /* handle                        */
         unsigned short * pNumEntries,        /* count                         */
         struct sqlca * pSqlca);              /* SQLCA                         */
@@ -3093,7 +3090,7 @@ SQL_API_RC SQL_API_FN                        /* Open Directory Scan           */
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Drop Database                 */
   sqledrpd_api (
-        const _SQLOLDCHAR * pDbAlias,        /* database alias                */
+        _SQLOLDCHAR * pDbAlias,              /* database alias                */
         _SQLOLDCHAR * pReserved2,            /* reserved                      */
         struct sqlca * pSqlca);              /* SQLCA                         */
 
@@ -4381,9 +4378,9 @@ SQL_API_RC SQL_API_FN                        /* Open Node Directory Scan      */
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Restart Database              */
   sqlerstd_api (
-        const _SQLOLDCHAR * pDbAlias,        /* database alias                */
-        const _SQLOLDCHAR * pUserName,       /* user name                     */
-        const _SQLOLDCHAR * pPassword,       /* password                      */
+        _SQLOLDCHAR * pDbAlias,              /* database alias                */
+        _SQLOLDCHAR * pUserName,             /* user name                     */
+        _SQLOLDCHAR * pPassword,             /* password                      */
         struct sqlca * pSqlca);              /* SQLCA                         */
 
 /******************************************************************************
@@ -4464,7 +4461,7 @@ SQL_API_RC SQL_API_FN                        /* V5 Stop Database Manager      */
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Uncatalog Database            */
   sqleuncd_api (
-        const _SQLOLDCHAR * pDbAlias,        /* database alias                */
+        _SQLOLDCHAR * pDbAlias,              /* database alias                */
         struct sqlca * pSqlca);              /* SQLCA                         */
 
 /******************************************************************************
@@ -5258,9 +5255,9 @@ SQL_API_RC SQL_API_FN                        /* Query Client Information      */
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Create Database               */
   sqlecrea_api (
-        const char * pDbName,                /* database                      */
-        const char * pLocalDbAlias,          /* local alias                   */
-        const char * pPath,                  /* drive/path                    */
+        char * pDbName,                      /* database                      */
+        char * pLocalDbAlias,                /* local alias                   */
+        char * pPath,                        /* drive/path                    */
         struct sqledbdesc * pDbDescriptor,   /* database descriptor block     */
         SQLEDBTERRITORYINFO * pTerritoryInfo, /* db locale and codeset        */
         char Reserved2,                      /* reserved                      */
@@ -5488,9 +5485,9 @@ SQL_API_RC SQL_API_FN                        /* Attach                        */
 *******************************************************************************/
 SQL_API_RC SQL_API_FN                        /* Attach                        */
   sqleatin_api (
-        const char * pNodeName,              /* node name                     */
-        const char * pUserName,              /* user name                     */
-        const char * pPassword,              /* password                      */
+        char * pNodeName,                    /* node name                     */
+        char * pUserName,                    /* user name                     */
+        char * pPassword,                    /* password                      */
         struct sqlca * pSqlca);              /* SQLCA                         */
 
 /******************************************************************************
@@ -6574,8 +6571,6 @@ SQL_API_RC SQL_API_FN                        /* Drop Node Verify              */
 #define SQLE_RC_INVSTRT -1026                /* Database manager already      */
                                              /* started                       */
 #define SQLE_RC_NONODEDIR -1027              /* Node directory not found      */
-#define SQLE_RC_STANDBY_REJECTED -1028       /* HADR standby is rejected by   */
-                                             /* primary                       */
 #define SQLE_RC_INVRLU -1029                 /* Partner lu not specified      */
 
 #define SQLE_RC_MAXDB  -1030                 /* Database directory is full    */
@@ -7301,9 +7296,6 @@ SQL_API_RC SQL_API_FN                        /* Drop Node Verify              */
 #define SQLE_RC_SNA_LICENSE -8004            /* No SNA/6000 license           */
 
 #define SQL_AUTHENTICATION_UNDEF 255         /* Authentication Undefined      */
-
-#define SQL_DSCVRCOMM_SZ 35                  /* Discover protocols string     */
-                                             /* size                          */
 
 /******************************************************************************
 ** sqledbcr API

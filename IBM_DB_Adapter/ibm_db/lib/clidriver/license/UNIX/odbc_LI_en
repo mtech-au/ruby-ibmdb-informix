@@ -3,7 +3,7 @@ LICENSE INFORMATION
 The Programs listed below are licensed under the following License Information terms and conditions in addition to the Program license terms previously agreed to by Client and IBM. If Client does not have previously agreed to license terms in effect for the Program, the International Program License Agreement (i125-3301-15) applies.
 
 Program Name (Program Number):
-IBM Data Server Driver for ODBC and CLI v12.1 (Tool)
+IBM Data Server Driver for ODBC and CLI v11.5.9 (Tool)
 
 The following standard terms apply to Licensee's use of the Program.
 
@@ -18,14 +18,10 @@ The Program includes components that are Redistributable and they are listed bel
 IBM, its suppliers and distributors provide the Redistributables and related documentation without obligation of support and "AS IS", WITH NO WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING THE WARRANTY OF TITLE, NON-INFRINGEMENT OR NON-INTERFERENCE AND THE IMPLIED WARRANTIES AND CONDITIONS OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. 
 
 The following are Redistributables:
-IBM Data Server Driver for ODBC and CLI V12.1 Redistributables:
-
+IBM Data Server Driver for ODBC and CLI V11.5 Redistributables:
 The following list includes files that are provided to Licensee pursuant to the Redistributables section of the IBM International Program License Agreements License Information that applies to this Program:
-
 List Redistributable files:
-
 Common list for all OS - Unix,Linux,MacOS,Windows:
-
 04370923.cnv
 08500923.cnv
 08501252.cnv 
@@ -128,7 +124,6 @@ ddcs400.lst
 conlic.bin
 odbc_notices.txt
 odbc_REDIST.txt
-
 For AIX in addition to common files:
 libdb2.a
 libdb2clixml4c.a
@@ -138,7 +133,6 @@ libdb2osse_db2.a
 IBMkrb5.a
 IBMIAMauth.a
 IBMOSauthclient.a  
-
 For MacOS in addition to common files:
 libdb2.dylib
 libdb2o.dylib
@@ -147,7 +141,6 @@ libDB2xml4c.58.0.dylib
 libDB2xml4c.58.dylib
 libDB2xml4c.dylib
 IBMIAMauth.dylib
-
 For Windows in addition to common files:
 db2app.lib
 db2app64.lib
@@ -232,12 +225,11 @@ db2istring_v115.dll.2.manifest
 db2odbcr.dll
 db2odbcr64.dll
 db2odbcr64.dll.2.manifest
-  
 
 
-L/N: L-PGRC-4QLRBE
-D/N: L-PGRC-4QLRBE
-P/N: L-PGRC-4QLRBE
+L/N: L-ASUX-ZXSTFM
+D/N: L-ASUX-ZXSTFM
+P/N: L-ASUX-ZXSTFM
 
 International Program License Agreement
 

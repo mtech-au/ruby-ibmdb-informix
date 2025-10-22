@@ -12,15 +12,15 @@
  * Function = Include File defining:
  *              Operating System Specific Information
  *
- * Operating System = Darwin
+ * Operating System = Linux
  *
  *****************************************************************************/
 
 #if !defined  SQL_H_SQLSYSTM
 #define SQL_H_SQLSYSTM          /* Permit duplicate Includes */
 
-#if !defined DB2DARWIN
-   #define DB2DARWIN    1
+#if !defined DB2LINUX
+   #define DB2LINUX    1
 #endif
 
 /* Operating System Control Parameters */
@@ -68,7 +68,7 @@ typedef short           sqlint16;
 typedef unsigned short  sqluint16;
 
 
-#if defined __LP64__ || defined __x86_64__
+#if defined __LP64__ || defined __PPC64__ || defined __x86_64__ || defined __s390x__
    #define db2Is64bit
 #endif
 

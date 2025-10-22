@@ -3,7 +3,7 @@
 以下の「プログラム」は、お客様と IBM とが事前に合意した「プログラム」の使用許諾条件に加えて、次のライセンス情報の使用条件に基づいて使用許諾されます。 お客様が「プログラム」の有効な使用許諾条件に事前に合意していない場合、 プログラムのご使用条件 (i125-3301-15) が適用されます。
 
 プログラム名 (プログラム番号):
-IBM Data Server Driver for ODBC and CLI v12.1 (Tool)
+IBM Data Server Driver for ODBC and CLI v11.5.9 (Tool)
 
 以下の標準条件が、ライセンシーによる「プログラム」の使用に適用されます。
 
@@ -18,14 +18,10 @@ IBM Data Server Driver for ODBC and CLI v12.1 (Tool)
 IBM、IBM のサプライヤーまたはディストリビューターは、再配布可能物と関連文書をサポート義務を負わずに現存のままの状態で提供し、法律上の瑕疵担保責任を含め、権原の保証、第三者の権利の不侵害の保証、商品性の保証および特定目的適合性の保証を含む明示または黙示のいかなる保証責任も負わないものとします。
 
 「再配布可能物」は以下のとおりです。
-IBM Data Server Driver for ODBC and CLI V12.1 Redistributables:
-
+IBM Data Server Driver for ODBC and CLI V11.5 Redistributables:
 The following list includes files that are provided to Licensee pursuant to the Redistributables section of the IBM International Program License Agreements License Information that applies to this Program:
-
 List Redistributable files:
-
 Common list for all OS - Unix,Linux,MacOS,Windows:
-
 04370923.cnv
 08500923.cnv
 08501252.cnv 
@@ -128,7 +124,6 @@ ddcs400.lst
 conlic.bin
 odbc_notices.txt
 odbc_REDIST.txt
-
 For AIX in addition to common files:
 libdb2.a
 libdb2clixml4c.a
@@ -138,7 +133,6 @@ libdb2osse_db2.a
 IBMkrb5.a
 IBMIAMauth.a
 IBMOSauthclient.a  
-
 For MacOS in addition to common files:
 libdb2.dylib
 libdb2o.dylib
@@ -147,7 +141,6 @@ libDB2xml4c.58.0.dylib
 libDB2xml4c.58.dylib
 libDB2xml4c.dylib
 IBMIAMauth.dylib
-
 For Windows in addition to common files:
 db2app.lib
 db2app64.lib
@@ -232,12 +225,11 @@ db2istring_v115.dll.2.manifest
 db2odbcr.dll
 db2odbcr64.dll
 db2odbcr64.dll.2.manifest
-  
 
 
-L/N: L-PGRC-4QLRBE
-D/N: L-PGRC-4QLRBE
-P/N: L-PGRC-4QLRBE
+L/N: L-ASUX-ZXSTFM
+D/N: L-ASUX-ZXSTFM
+P/N: L-ASUX-ZXSTFM
 
 プログラムのご使用条件
 

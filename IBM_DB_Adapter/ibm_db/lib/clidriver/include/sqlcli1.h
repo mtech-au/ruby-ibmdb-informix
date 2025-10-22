@@ -677,6 +677,7 @@ extern "C" {
 #define SQL_ATTR_INFO_APPLNAME                     1283
 #define SQL_ATTR_INFO_ACCTSTR                      1284
 #define SQL_ATTR_AUTOCOMMIT_NOCOMMIT               2462
+#define SQL_ATTR_QUERY_PATROLLER                   2466
 #define SQL_ATTR_CHAINING_BEGIN                    2464
 #define SQL_ATTR_CHAINING_END                      2465
 #define SQL_ATTR_EXTENDEDBIND                      2475
@@ -758,8 +759,6 @@ extern "C" {
 #define SQL_ATTR_TRUSTED_CONTEXT_ACCESSTOKEN       3051
 #define SQL_ATTR_QUERY_PREFETCH                    3052
 #define SQL_ATTR_MAXBLKEXT                         3053
-#define SQL_ATTR_APP_TOKEN_GEN_CALLBACK            3054
-#define SQL_ATTR_APP_TOKEN_GEN_USERDATA            3055
 
 /* Mapping of NZ Connection level attributes to DB2 */
 
@@ -942,6 +941,13 @@ extern "C" {
 #define  SQL_ATTR_SERVER_MSGTXT_MASK_ERRORS      0xFFFFFFFE
 #define  SQL_ATTR_SERVER_MSGTXT_MASK_ALL         0xFFFFFFFF
 #define  SQL_ATTR_SERVER_MSGTXT_MASK_DEFAULT SQL_ATTR_SERVER_MSGTXT_MASK_LOCAL_FIRST
+
+/*
+ * Options for SQL_ATTR_QUERY_PATROLLER
+ */
+#define SQL_ATTR_QUERY_PATROLLER_DISABLE   1
+#define SQL_ATTR_QUERY_PATROLLER_ENABLE    2
+#define SQL_ATTR_QUERY_PATROLLER_BYPASS    3
 
 /*
  * Options for SQL_ATTR_STATICMODE
@@ -1152,6 +1158,7 @@ typedef struct SQL_NET_STATS {
     SQLUBIGINT uiNetStatsRoundTrips;     /* Accumulated network round trips */
                                          /* since reset */
 } SQL_NET_STATS;
+
 
 
 /*
@@ -1899,6 +1906,7 @@ SQLRETURN SQL_API_FN SQLDropPkg         ( SQLHDBC    hDbc,
                                           SQLINTEGER cbCollection,
                                           SQLCHAR   *szPackage,
                                           SQLINTEGER cbPackage);
+
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,6 @@
 NOTICES AND INFORMATION
 
-IBM Data Server Driver for ODBC and CLI v12.1
+IBM Data Server Driver for ODBC and CLI v11.5
 
 The IBM license agreement and any applicable information on the web
 download page for IBM products refers Licensee to this file for details

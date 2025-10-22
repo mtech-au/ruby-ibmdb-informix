@@ -1,4 +1,4 @@
-IBM Data Server Driver for ODBC and CLI v12.1 Redistributables:
+IBM Data Server Driver for ODBC and CLI V11.5 Redistributables:
 
 The following list includes files that are provided to Licensee pursuant to the Redistributables section of the IBM International Program License Agreements License Information that applies to this Program:
 
@@ -108,7 +108,6 @@ ddcs400.lst
 conlic.bin
 odbc_notices.txt
 odbc_REDIST.txt
-dsdriver_fixlist.html
 
 For AIX in addition to common files:
 libdb2.a

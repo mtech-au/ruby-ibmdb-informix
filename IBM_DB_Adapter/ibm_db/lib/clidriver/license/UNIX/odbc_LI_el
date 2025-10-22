@@ -3,7 +3,7 @@
 Τα Προγράμματα που περιλαμβάνονται στην παρακάτω λίστα παραχωρούνται με άδεια χρήσηςη βάσει των ακόλουθων όρων και προϋποθέσεων των Πληροφοριών για την Άδεια Χρήσης, επιπλέον των όρων άδειας χρήσης του Προγράμματος τους οποίους αποδέχθηκαν προηγουμένως ο Πελάτης και η IBM. Εάν ο Πελάτης δεν έχει αποδεχθεί προηγουμένως τους όρους άδειας χρήσης που διέπουν τη χρήση του Προγράμματος, τότε η ισχύει η Διεθνής Σύμβαση Άδειας Χρήσης Προγράμματος (i125-3301-15).
 
 Όνομα Προγράμματος (Αριθμός Προγράμματος):
-IBM Data Server Driver for ODBC and CLI v12.1 (Tool)
+IBM Data Server Driver for ODBC and CLI v11.5.9 (Tool)
 
 Οι ακόλουθοι βασικοί όροι διέπουν τη χρήση του Προγράμματος εκ μέρους του Δικαιούχου Άδειας Χρήσης.
 
@@ -18,14 +18,10 @@ IBM Data Server Driver for ODBC and CLI v12.1 (Tool)
 Η IBM, οι προμηθευτές της και οι διανομείς της παρέχουν τα Αναδιανεμητέα Στοιχεία και τη σχετική τεκμηρίωση χωρίς υποχρέωση υποστήριξης και "ΩΣ ΕΧΟΥΝ", ΧΩΡΙΣ ΚΑΝΕΝΟΣ ΕΙΔΟΥΣ ΕΓΓΥΗΣΗ, ΡΗΤΗ Ή ΣΙΩΠΗΡΗ, ΣΥΜΠΕΡΙΛΑΜΒΑΝΟΜΕΝΗΣ ΤΗΣ ΕΓΓΥΗΣΗΣ ΤΙΤΛΟΥ ΚΥΡΙΟΤΗΤΑΣ, ΜΗ ΠΑΡΑΒΙΑΣΗΣ ΔΙΚΑΙΩΜΑΤΩΝ Ή ΜΗ ΠΑΡΕΜΒΑΣΗΣ ΚΑΙ ΤΩΝ ΣΙΩΠΗΡΩΝ ΕΓΓΥΗΣΕΩΝ ΚΑΙ ΠΡΟΫΠΟΘΕΣΕΩΝ ΕΜΠΟΡΕΥΣΙΜΟΤΗΤΑΣ ΚΑΙ ΚΑΤΑΛΛΗΛΟΤΗΤΑΣ ΓΙΑ ΣΥΓΚΕΚΡΙΜΕΝΟ ΣΚΟΠΟ.
 
 Τα ακόλουθα είναι Αναδιανεμητέα Στοιχεία:
-IBM Data Server Driver for ODBC and CLI V12.1 Redistributables:
-
+IBM Data Server Driver for ODBC and CLI V11.5 Redistributables:
 The following list includes files that are provided to Licensee pursuant to the Redistributables section of the IBM International Program License Agreements License Information that applies to this Program:
-
 List Redistributable files:
-
 Common list for all OS - Unix,Linux,MacOS,Windows:
-
 04370923.cnv
 08500923.cnv
 08501252.cnv 
@@ -128,7 +124,6 @@ ddcs400.lst
 conlic.bin
 odbc_notices.txt
 odbc_REDIST.txt
-
 For AIX in addition to common files:
 libdb2.a
 libdb2clixml4c.a
@@ -138,7 +133,6 @@ libdb2osse_db2.a
 IBMkrb5.a
 IBMIAMauth.a
 IBMOSauthclient.a  
-
 For MacOS in addition to common files:
 libdb2.dylib
 libdb2o.dylib
@@ -147,7 +141,6 @@ libDB2xml4c.58.0.dylib
 libDB2xml4c.58.dylib
 libDB2xml4c.dylib
 IBMIAMauth.dylib
-
 For Windows in addition to common files:
 db2app.lib
 db2app64.lib
@@ -232,12 +225,11 @@ db2istring_v115.dll.2.manifest
 db2odbcr.dll
 db2odbcr64.dll
 db2odbcr64.dll.2.manifest
-  
 
 
-L/N: L-PGRC-4QLRBE
-D/N: L-PGRC-4QLRBE
-P/N: L-PGRC-4QLRBE
+L/N: L-ASUX-ZXSTFM
+D/N: L-ASUX-ZXSTFM
+P/N: L-ASUX-ZXSTFM
 
 Διεθνής Σύμβαση Άδειας Χρήσης Προγράμματος
 
