@@ -4441,12 +4441,13 @@ module Arel
           visit_Arel_Nodes_Limit(o.limit, collector)
           visit_Arel_Nodes_Offset(o.offset, collector)
         elsif o.offset && o.limit.nil?
-          if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
+          #Mtech - removed IDS check
+          # if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
             collector << ' OFFSET '
             visit o.offset.expr, collector
             collector << ' ROWS '
             maybe_visit o.lock, collector
-          end
+          # end
         else
           visit_Arel_Nodes_SelectOptions(o, collector)
         end
