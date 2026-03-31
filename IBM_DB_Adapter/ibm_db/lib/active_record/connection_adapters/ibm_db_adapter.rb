@@ -4440,6 +4440,12 @@ module Arel
         if o.offset && o.limit
           visit_Arel_Nodes_Limit(o.limit, collector)
           visit_Arel_Nodes_Offset(o.offset, collector)
+          #MTech - start pagination fix for IDS
+        elsif o.limit && o.offset.nil?
+          # Page 1 — limit only, no offset
+          visit_Arel_Nodes_Limit(o.limit, collector)
+          maybe_visit o.lock, collector
+          # Mtech - end pagination fix
         elsif o.offset && o.limit.nil?
           #Mtech - removed IDS check
           # if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
