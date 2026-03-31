@@ -4461,7 +4461,6 @@ module Arel
       def visit_Arel_Nodes_Lock(_o, collector)
         collector
       end
-    end
 
     #Mtech fix for IDS
 
@@ -4543,6 +4542,7 @@ module Arel
       end
 
       collector
+      end
     end
 
   end
