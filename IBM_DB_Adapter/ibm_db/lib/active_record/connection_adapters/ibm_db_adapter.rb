@@ -4389,11 +4389,10 @@ module Arel
 
       def visit_Arel_Nodes_Offset(o, collector)
         @connection.puts_log "visit_Arel_Nodes_Offset #{@connection.servertype}"
-        # Mtech - removed IDS check
-        #if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
+        if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
           collector << ' OFFSET '
           visit o.expr, collector
-        #end
+        end
       end
 
       def visit_Arel_Nodes_ValuesList(o, collector)
@@ -4417,6 +4416,12 @@ module Arel
       end
 
       def visit_Arel_Nodes_SelectStatement(o, collector)
+        #MTech - Check if the server is IDS, if yes then use the custom method to generate the SQL for select statement
+        if @connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
+          return visit_Arel_Nodes_SelectStatement_IDS(o, collector)
+        end
+        #Mtech - End
+
         @connection.puts_log "visit_Arel_Nodes_SelectStatement #{@connection.servertype}"
         if o.with
           collector = visit o.with, collector
@@ -4440,20 +4445,13 @@ module Arel
         if o.offset && o.limit
           visit_Arel_Nodes_Limit(o.limit, collector)
           visit_Arel_Nodes_Offset(o.offset, collector)
-          #MTech - start pagination fix for IDS
-        elsif o.limit && o.offset.nil?
-          # Page 1 — limit only, no offset
-          visit_Arel_Nodes_Limit(o.limit, collector)
-          maybe_visit o.lock, collector
-          # Mtech - end pagination fix
         elsif o.offset && o.limit.nil?
-          #Mtech - removed IDS check
-          # if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
+          if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
             collector << ' OFFSET '
             visit o.offset.expr, collector
             collector << ' ROWS '
             maybe_visit o.lock, collector
-          # end
+          end
         else
           visit_Arel_Nodes_SelectOptions(o, collector)
         end
@@ -4464,5 +4462,88 @@ module Arel
         collector
       end
     end
+
+    #Mtech fix for IDS
+
+    def visit_Arel_Nodes_SelectStatement_IDS(o, collector)
+
+      if o.with
+        collector = visit o.with, collector
+        collector << ' '
+      end
+
+      # ── Build SELECT with SKIP/FIRST injected ──
+      collector << 'SELECT '
+
+      # Handle SKIP (offset) — must come before FIRST
+      if o.offset
+        collector << 'SKIP '
+        visit o.offset.expr, collector
+        collector << ' '
+      end
+
+      # Handle FIRST (limit)
+      if o.limit
+        collector << 'FIRST '
+        visit o.limit.expr, collector
+        collector << ' '
+      end
+
+      # ── Now visit the cores WITHOUT the default SELECT keyword ──
+      collector = o.cores.inject(collector) do |c, x|
+        visit_Arel_Nodes_SelectCore_without_select(x, c)
+      end
+
+      # ── ORDER BY ──
+      unless o.orders.empty?
+        collector << ' ORDER BY '
+        len = o.orders.length - 1
+        o.orders.each_with_index do |x, i|
+          collector = visit(x, collector)
+          collector << ', ' unless len == i
+        end
+      end
+
+      maybe_visit o.lock, collector
+    end
+
+    # ── Custom core visitor that skips the SELECT keyword ──
+    # (because we already wrote it above with SKIP/FIRST)
+    def visit_Arel_Nodes_SelectCore_without_select(o, collector)
+      unless o.projections.empty?
+        len = o.projections.length - 1
+        o.projections.each_with_index do |x, i|
+          collector = visit(x, collector)
+          collector << ', ' unless len == i
+        end
+      end
+
+      if o.source && !o.source.empty?
+        collector << ' FROM '
+        collector = visit o.source, collector
+      end
+
+      unless o.wheres.empty?
+        collector << ' WHERE '
+        collector = inject_join o.wheres, collector, ' AND '
+      end
+
+      unless o.groups.empty?
+        collector << ' GROUP BY '
+        len = o.groups.length - 1
+        o.groups.each_with_index do |x, i|
+          collector = visit(x, collector)
+          collector << ', ' unless len == i
+        end
+      end
+
+      if o.havings.any?
+        collector << ' HAVING '
+        inject_join o.havings, collector, ' AND '
+      end
+
+      collector
+    end
+
   end
 end
