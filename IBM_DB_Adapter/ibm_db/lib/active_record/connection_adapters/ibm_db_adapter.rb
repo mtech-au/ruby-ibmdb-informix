@@ -4389,10 +4389,11 @@ module Arel
 
       def visit_Arel_Nodes_Offset(o, collector)
         @connection.puts_log "visit_Arel_Nodes_Offset #{@connection.servertype}"
-        if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
+        # Mtech - removed IDS check
+        #if !@connection.servertype.instance_of? ActiveRecord::ConnectionAdapters::IBM_IDS
           collector << ' OFFSET '
           visit o.expr, collector
-        end
+        #end
       end
 
       def visit_Arel_Nodes_ValuesList(o, collector)
