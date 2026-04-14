@@ -838,6 +838,11 @@ module ActiveRecord
 
         @handle_lobs_triggered = false
 
+        # Caches primary_key(table_name) results. Cleared on DDL via clear_cache!.
+        # Major speedup for SchemaDumper, which otherwise hits the PK catalog
+        # repeatedly per table (columns -> primary_key, dumper -> primary_key).
+        @primary_key_cache = {}
+
         # Calls the parent class +ConnectionAdapters+' initializer
         super(@config)
 
@@ -1087,13 +1092,10 @@ module ActiveRecord
         true
       end
 
-      def puts_log(val)
-        begin
-        #         puts val
-        rescue StandardError
-        end
+      def puts_log(val = nil)
         return unless @debug == true
 
+        val = yield if block_given?
         log(" IBM_DB = #{val}", 'TRANSACTION') {}
       end
 
@@ -2396,17 +2398,28 @@ module ActiveRecord
         tables
       end
 
+      # Clears memoized metadata. Called on DDL so primary_key cache stays fresh.
+      def clear_cache!(*args, **kwargs)
+        @primary_key_cache&.clear
+        super
+      end
+
       # Returns the primary key of the mentioned table
       def primary_key(table_name)
+        cache_key = table_name.to_s
+        if @primary_key_cache&.key?(cache_key)
+          return @primary_key_cache[cache_key]
+        end
+
         puts_log 'primary_key'
         pk_name = []
         stmt = IBM_DB.primary_keys(@connection, nil,
                                    @servertype.set_case(@schema),
-                                   @servertype.set_case(table_name.to_s))
+                                   @servertype.set_case(cache_key))
         if stmt
           begin
             while (pk_index_row = IBM_DB.fetch_array(stmt))
-              puts_log "Primary_keys = #{pk_index_row}"
+              puts_log { "Primary_keys = #{pk_index_row}" }
               pk_name << pk_index_row[3].downcase
             end
           rescue StandardError => e # Handle driver fetch errors
@@ -2426,19 +2439,21 @@ module ActiveRecord
           raise StandardError.new('An unexpected error occurred during primary key retrieval')
 
         end
-        if pk_name.length == 1
-          pk_name[0]
-        elsif pk_name.empty?
-          nil
-        else
-          pk_name
-        end
+        result = if pk_name.length == 1
+                   pk_name[0]
+                 elsif pk_name.empty?
+                   nil
+                 else
+                   pk_name
+                 end
+        @primary_key_cache[cache_key] = result if @primary_key_cache
+        result
       end
 
       # Returns an array of non-primary key indexes for a specified table name
       def indexes(table_name, _name = nil)
         puts_log 'indexes'
-        puts_log "Table = #{table_name}"
+        puts_log { "Table = #{table_name}" }
         # to_s required because +table_name+ may be a symbol.
         table_name = table_name.to_s
         # Checks if a blank table name has been given.
@@ -2460,8 +2475,8 @@ module ActiveRecord
         if stmt
           begin
             while (pk_index_row = IBM_DB.fetch_array(stmt))
-              puts_log "Primary keys = #{pk_index_row}"
-              puts_log "pk_index = #{pk_index}"
+              puts_log { "Primary keys = #{pk_index_row}" }
+              puts_log { "pk_index = #{pk_index}" }
               next unless pk_index_row[5]
 
               pk_index_name = pk_index_row[5].downcase
@@ -2553,14 +2568,14 @@ module ActiveRecord
 
         # remove the primary key index entry.... should not be dumped by the dumper
 
-        puts_log "Indexes 1 = #{pk_index}"
+        puts_log { "Indexes 1 = #{pk_index}" }
         i = 0
         indexes.each do |index|
           indexes.delete_at(i) if pk_index && index.columns == pk_index.columns
           i += 1
         end
         # Returns the indexes array
-        puts_log "Indexes 2 = #{indexes}"
+        puts_log { "Indexes 2 = #{indexes}" }
         indexes
       end
 
@@ -2674,8 +2689,8 @@ module ActiveRecord
       def columns(table_name)
         default_blob_length = 1048576
         # to_s required because it may be a symbol.
-        puts_log "def columns #{table_name}"
-        puts_log caller
+        puts_log { "def columns #{table_name}" }
+        puts_log { caller.join("\n") }
         table_name = @servertype.set_case(table_name.to_s)
 
         # Checks if a blank table name has been given.
@@ -2706,14 +2721,14 @@ module ActiveRecord
             # +col+ is an hash with keys/value pairs for a column
             while col = IBM_DB.fetch_assoc(stmt)
               rowid = false
-              puts_log "def columns fecthed = #{col}"
+              puts_log { "def columns fecthed = #{col}" }
               column_name = col['column_name'].downcase
               #mtech syscat does not exist in informix
               unless @servertype.instance_of? IBM_IDS
                 sql = "select 1 FROM syscat.columns where tabname = #{quote(table_name.upcase)} and generated = 'D' and colname = '#{col['column_name']}'"
                 rows = execute_without_logging(sql).rows
                 auto_increment = rows.dig(0, 0) == 1 ? true : nil
-                puts_log "def columns auto_increment = #{rows}, #{auto_increment}"
+                puts_log { "def columns auto_increment = #{rows}, #{auto_increment}" }
               end
 
               # Assigns the column default value.
@@ -2724,7 +2739,7 @@ module ActiveRecord
 
               if Array(pri_key).include?(column_name) and column_type =~ /integer|bigint/i
                 rowid = true
-                puts_log "def columns rowid = true"
+                puts_log 'def columns rowid = true'
               end
               # Assigns the field length (size) for the column
 
@@ -2754,9 +2769,9 @@ module ActiveRecord
               # Make sure the hidden column (db2_generated_rowid_for_lobs) in DB2 z/OS isn't added to the list
               next if column_name.match(/db2_generated_rowid_for_lobs/i)
 
-              puts_log "Column type = #{column_type}"
+              puts_log { "Column type = #{column_type}" }
               ruby_type = simplified_type(column_type)
-              puts_log "Ruby type after = #{ruby_type}"
+              puts_log { "Ruby type after = #{ruby_type}" }
               precision = extract_precision(ruby_type)
 
               if column_type.match(/timestamp|integer|bigint|date|time|blob/i)
@@ -2784,9 +2799,9 @@ module ActiveRecord
 
               column_type = 'boolean' if ruby_type.to_s == 'boolean'
 
-              puts_log "Inside def columns() - default_value = #{default_value}, column_default_value = #{column_default_value}"
+              puts_log { "Inside def columns() - default_value = #{default_value}, column_default_value = #{column_default_value}" }
               default_function = extract_default_function(default_value, column_default_value)
-              puts_log "Inside def columns() - default_function = #{default_function}"
+              puts_log { "Inside def columns() - default_function = #{default_function}" }
 
               sqltype_metadata = SqlTypeMetadata.new(
                 # sql_type: sql_type,
@@ -2818,7 +2833,7 @@ module ActiveRecord
 
         end
         # Returns the columns array
-        puts_log "Inside def columns() #{columns}"
+        puts_log { "Inside def columns() #{columns}" }
         columns
       end
 
@@ -2836,7 +2851,7 @@ module ActiveRecord
       end
 
       def foreign_keys(table_name)
-        puts_log "foreign_keys #{table_name}"
+        puts_log { "foreign_keys #{table_name}" }
         # fetch the foreign keys of the table using function foreign_keys
         # PKTABLE_NAME::  fk_row[2] Name of the table containing the primary key.
         # PKCOLUMN_NAME:: fk_row[3] Name of the column containing the primary key.
@@ -2854,7 +2869,7 @@ module ActiveRecord
         if stmt
           begin
             while (fk_row = IBM_DB.fetch_array(stmt))
-              puts_log "foreign_keys fetch = #{fk_row}"
+              puts_log { "foreign_keys fetch = #{fk_row}" }
               options = {
                 column: fk_row[7].downcase,
                 name: fk_row[11].downcase,
@@ -2901,7 +2916,7 @@ module ActiveRecord
             end
 
           rescue StandardError => e # Handle driver fetch errors
-            puts_log "foreign_keys e = #{e}"
+            puts_log { "foreign_keys e = #{e}" }
             error_msg = IBM_DB.getErrormsg(stmt, IBM_DB::DB_STMT)
             raise "Failed to retrieve foreign key metadata during fetch: #{error_msg}" if error_msg && !error_msg.empty?
 
