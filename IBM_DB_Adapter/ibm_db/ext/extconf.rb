@@ -318,3 +318,12 @@ have_header('gil_release_version.h')
 have_header('unicode_support_version.h')
 
 create_makefile('ibm_db')
+
+File.open('Makefile', 'a') do |mf|
+  mf.puts <<~MAKE
+
+    all: copy-to-lib
+    copy-to-lib: $(DLLIB)
+    \tcp $(DLLIB) $(srcdir)/../lib/$(DLLIB)
+  MAKE
+end
