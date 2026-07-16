@@ -1,4 +1,12 @@
 #!/usr/bin/env ruby
+
+# Informix CSDK ODBC build mode (native SQLI, no DRDA / DB2 clidriver).
+# Opt in with IBM_DB_INFORMIX=1 or `bundle config set build.ibm_db --enable-informix`.
+if ENV['IBM_DB_INFORMIX'] =~ /\A(1|true|yes)\z/i || ARGV.grep(/\A--enable-informix\z/).any?
+  load File.expand_path('extconf_informix.rb', __dir__)
+  exit 0
+end
+
 require 'net/http'
 require 'open-uri'
 require 'rubygems/package'

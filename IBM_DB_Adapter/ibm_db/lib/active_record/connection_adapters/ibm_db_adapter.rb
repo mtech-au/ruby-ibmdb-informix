@@ -461,18 +461,22 @@ module ActiveRecord
       # (in support to formatting, audit and billing purposes):
       # Retrieve database objects fields in lowercase
       conn_options = { IBM_DB::ATTR_CASE => IBM_DB::CASE_LOWER }
-      config.each do |key, value|
-        next if value.nil?
+      # The SQL_ATTR_INFO_* client-info attributes are DB2 CLI extensions the
+      # Informix CSDK ODBC driver rejects, so they are only set on DRDA builds
+      unless defined?(IBM_DB::INFORMIX_ODBC) && IBM_DB::INFORMIX_ODBC
+        config.each do |key, value|
+          next if value.nil?
 
-        case key
-        when :app_user        # Set connection's user info
-          conn_options[IBM_DB::SQL_ATTR_INFO_USERID]     = value
-        when :account         # Set connection's account info
-          conn_options[IBM_DB::SQL_ATTR_INFO_ACCTSTR]    = value
-        when :application     # Set connection's application info
-          conn_options[IBM_DB::SQL_ATTR_INFO_APPLNAME]   = value
-        when :workstation     # Set connection's workstation info
-          conn_options[IBM_DB::SQL_ATTR_INFO_WRKSTNNAME] = value
+          case key
+          when :app_user        # Set connection's user info
+            conn_options[IBM_DB::SQL_ATTR_INFO_USERID]     = value
+          when :account         # Set connection's account info
+            conn_options[IBM_DB::SQL_ATTR_INFO_ACCTSTR]    = value
+          when :application     # Set connection's application info
+            conn_options[IBM_DB::SQL_ATTR_INFO_APPLNAME]   = value
+          when :workstation     # Set connection's workstation info
+            conn_options[IBM_DB::SQL_ATTR_INFO_WRKSTNNAME] = value
+          end
         end
       end
 
@@ -480,7 +484,28 @@ module ActiveRecord
         # Checks if a host name or address has been specified. If so, this implies a TCP/IP connection
         # Returns IBM_DB.Connection object upon succesful DB connection to the database
         # If otherwise the connection fails, +false+ is returned
-        if config.has_key?(:host)
+        if defined?(IBM_DB::INFORMIX_ODBC) && IBM_DB::INFORMIX_ODBC
+          # Extension built against the Informix CSDK ODBC driver (native SQLI):
+          # connect with the Informix ODBC keyword set. SERVER is the
+          # INFORMIXSERVER name; HOST/SERVICE/PROTOCOL may be omitted when the
+          # server is resolvable through $INFORMIXDIR/etc/sqlhosts.
+          unless config.has_key?(:informix_server)
+            raise ArgumentError,
+                  'informix_server (the INFORMIXSERVER name) must be specified when the driver is built in Informix ODBC mode'
+          end
+
+          conn_string  = "SERVER=#{config[:informix_server]};"
+          conn_string << "DATABASE=#{database};"
+          if config.has_key?(:host)
+            conn_string << "HOST=#{config[:host]};"
+            conn_string << "SERVICE=#{config[:service] || config[:port] || 9088};"
+            conn_string << "PROTOCOL=#{config[:protocol] || 'onsoctcp'};"
+          end
+          conn_string << "UID=#{username};PWD=#{password};"
+          conn_string << "CLIENT_LOCALE=#{config[:client_locale]};" if config.has_key?(:client_locale)
+          conn_string << "DB_LOCALE=#{config[:db_locale]};" if config.has_key?(:db_locale)
+          connection = IBM_DB.connect(conn_string, '', '', conn_options, set_quoted_literal_replacement)
+        elsif config.has_key?(:host)
           # Retrieves the host address/name
           host = config[:host]
           # A net address connection requires a port. If no port has been specified, 50000 is used by default
@@ -817,6 +842,13 @@ module ActiveRecord
           @host           = config[:host]
           @port           = config[:port] || 50000 # default port
         end
+        # Informix ODBC (native SQLI) connection settings, used when the
+        # extension is built against the Informix CSDK ODBC driver
+        @informix_server  = config[:informix_server]
+        @service          = config[:service]
+        @protocol         = config[:protocol]
+        @client_locale    = config[:client_locale]
+        @db_locale        = config[:db_locale]
         @schema = if config.has_key?(:schema)
                     config[:schema]
                   else
@@ -876,7 +908,7 @@ module ActiveRecord
               end
             when /AS/i                # DB2 for i5 (iSeries)
               @servertype = IBM_DB2_I5.new(self, @isAr3)
-            when /IDS/i               # Informix Dynamic Server
+            when /IDS/i, /Informix/i  # Informix Dynamic Server (DRDA reports IDS/..., CSDK ODBC reports Informix...)
               @servertype = IBM_IDS.new(self, @isAr3)
             else
               log('server_info',
@@ -1127,7 +1159,26 @@ module ActiveRecord
 
         begin
           puts_log "Begin connection #{Thread.current}"
-          if @host
+          if defined?(IBM_DB::INFORMIX_ODBC) && IBM_DB::INFORMIX_ODBC
+            # Extension built against the Informix CSDK ODBC driver (native SQLI)
+            unless @informix_server
+              raise ArgumentError,
+                    'informix_server (the INFORMIXSERVER name) must be specified when the driver is built in Informix ODBC mode'
+            end
+
+            @conn_string  = "SERVER=#{@informix_server};"
+            @conn_string << "DATABASE=#{@database};"
+            if @host
+              @conn_string << "HOST=#{@host};"
+              @conn_string << "SERVICE=#{@service || @port || 9088};"
+              @conn_string << "PROTOCOL=#{@protocol || 'onsoctcp'};"
+            end
+            @conn_string << "UID=#{@username};PWD=#{@password};"
+            @conn_string << "CLIENT_LOCALE=#{@client_locale};" if @client_locale
+            @conn_string << "DB_LOCALE=#{@db_locale};" if @db_locale
+            @connection = IBM_DB.connect(@conn_string, '', '', @conn_options, @set_quoted_literal_replacement)
+            puts_log "Connection Established (Informix ODBC) = #{@connection}"
+          elsif @host
             @conn_string = "DRIVER={IBM DB2 ODBC DRIVER};\
                             DATABASE=#{@database};\
                             HOSTNAME=#{@host};\
@@ -2149,6 +2200,12 @@ module ActiveRecord
 
       def build_conn_str_for_dbops
         puts_log 'build_conn_str_for_dbops'
+        if defined?(IBM_DB::INFORMIX_ODBC) && IBM_DB::INFORMIX_ODBC
+          # SQLCreateDb/SQLDropDb are DB2 CLI extensions unavailable in the Informix CSDK ODBC driver
+          raise NotImplementedError,
+                'create/drop database is not supported over Informix ODBC; create the database with dbaccess/onmode instead'
+        end
+
         connect_str = 'DRIVER={IBM DB2 ODBC DRIVER};ATTACH=true;'
         unless @host.nil?
           connect_str << "HOSTNAME=#{@host};"
@@ -4277,7 +4334,42 @@ To remove the column, the table must be dropped and recreated without the #{colu
       # IDENTITY_VAL_LOCAL function. We used the "stmt" parameter to identify
       # the statement resource from which to get the last generated value
       def last_generated_id(stmt)
-        IBM_DB.get_last_serial_value(stmt)
+        id = begin
+          IBM_DB.get_last_serial_value(stmt)
+        rescue StandardError
+          # SQL_ATTR_GET_GENERATED_VALUE is a DB2 CLI extension the Informix
+          # CSDK ODBC driver does not implement
+          nil
+        end
+        return id if id && id.to_i != 0
+
+        # Native Informix ODBC fallback: the last SERIAL value is exposed
+        # through DBINFO on the same connection. sqlca.sqlerrd1 covers SERIAL;
+        # bigserial covers BIGSERIAL/SERIAL8 columns.
+        %w[sqlca.sqlerrd1 bigserial].each do |source|
+          value = dbinfo_value(source)
+          return value if value && value.to_i != 0
+        end
+        id
+      end
+
+      # Queries an Informix DBINFO value on the adapter's connection.
+      # Returns nil if the lookup fails (e.g. older servers without bigserial)
+      def dbinfo_value(source)
+        sql = "SELECT DBINFO('#{source}') FROM systables WHERE tabid = 1"
+        info_stmt = IBM_DB.prepare(@adapter.connection, sql)
+        return nil unless info_stmt
+
+        begin
+          return nil unless IBM_DB.execute(info_stmt, nil)
+
+          IBM_DB.fetch_row(info_stmt)
+          IBM_DB.result(info_stmt, 0)
+        rescue StandardError
+          nil
+        ensure
+          IBM_DB.free_stmt(info_stmt) if info_stmt
+        end
       end
 
       # This method throws an error when trying to create a default value on a

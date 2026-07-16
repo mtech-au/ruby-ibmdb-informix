@@ -17,7 +17,25 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <sqlcli1.h>
+#ifdef IBM_DB_INFORMIX_ODBC
+  #include <infxcli.h>              /* Informix CSDK ODBC: pulls in sql.h/sqlext.h */
+  #include "ruby_informix_compat.h" /* fallback defines for DB2 CLI extensions */
+#else
+  #include <sqlcli1.h>
+#endif
+
+/* rb_str2cstr/STR2CSTR were removed in Ruby 1.9 but the non-unicode code
+ * paths still call them. Provide equivalents built on the modern string API
+ * (all call sites pass long* lengths, matching the original signature). */
+static inline char* ruby_ibm_db_str2cstr( VALUE str, long *len ) {
+  StringValue( str );
+  if ( len != NULL ) *len = RSTRING_LEN( str );
+  return RSTRING_PTR( str );
+}
+#define rb_str2cstr( str, len ) ruby_ibm_db_str2cstr( (str), (long *)(len) )
+#ifndef STR2CSTR
+#define STR2CSTR( str ) ruby_ibm_db_str2cstr( (str), NULL )
+#endif
 
 #ifndef SQL_XML
 #define SQL_XML -370

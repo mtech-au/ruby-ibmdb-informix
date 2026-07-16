@@ -32,7 +32,13 @@ Gem::Specification.new do |spec|
                  item.include?("Rakefile") ||
                  item.include?("IBM_DB.gemspec") ||
                  item.include?(".gem") ||
-                 item.include?("ibm_db_mswin32.rb")
+                 item.include?("ibm_db_mswin32.rb") ||
+                 # Exclude local build artifacts so shipped gems always compile
+                 # the extension on install (required for IBM_DB_INFORMIX=1 to
+                 # be able to take effect on the target machine)
+                 item =~ %r{\Alib/ibm_db\.(so|bundle)\z} ||
+                 item.start_with?("lib/clidriver") ||
+                 item =~ %r{\Aext/(Makefile|mkmf\.log|.*\.(o|so|bundle)|gil_release_version\.h|unicode_support_version\.h)\z}
                end
 
   if RUBY_PLATFORM =~ /mswin32/ || RUBY_PLATFORM =~ /mingw/
@@ -45,17 +51,11 @@ Gem::Specification.new do |spec|
   #   spec.extensions << 'ext/extconf.rb'
   else
     spec.files = candidates.delete_if { |item| item.include?("lib/mswin32") }
-    puts ".. Check for the pre-built IBM_DB driver for this platform: #{RUBY_PLATFORM}"
-    # find ibm_db driver path
-    drv_path = Pathname.new(File.dirname(__FILE__)) + 'lib'
-    puts ".. Locate ibm_db driver path: #{drv_path.realpath}"
-    drv_lib = drv_path + 'ibm_db.so'
-    if drv_lib.file? #&& (require "#{drv_lib.to_s}") #Commenting condition check as Ruby-1.9 does not recognize files from local directory
-      puts ".. ibm_db driver was found:   #{drv_lib.realpath}"
-    else
-      puts ".. ibm_db driver binary was not found. The driver native extension to be built during install."	  
-      spec.extensions << 'ext/extconf.rb'	  
-    end
+    # Built artifacts (lib/ibm_db.so, lib/clidriver) are excluded from the gem
+    # above, so the native extension is always compiled at install time. That
+    # is when the DRDA (default) vs Informix ODBC (IBM_DB_INFORMIX=1) driver
+    # choice takes effect.
+    spec.extensions << 'ext/extconf.rb'
   end
 
   spec.test_file = 'test/ibm_db_test.rb'

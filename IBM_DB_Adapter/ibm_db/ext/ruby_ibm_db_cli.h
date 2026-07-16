@@ -57,7 +57,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <sqlcli1.h>
+#ifdef IBM_DB_INFORMIX_ODBC
+  #include <infxcli.h>              /* Informix CSDK ODBC: pulls in sql.h/sqlext.h */
+  #include "ruby_informix_compat.h" /* fallback defines for DB2 CLI extensions */
+#else
+  #include <sqlcli1.h>
+#endif
 
 /* Defines a linked list structure for caching param data */
 typedef struct _param_cache_node {

@@ -367,6 +367,13 @@ static void ruby_ibm_db_check_sqlcreatedb(void *cliLib) {
  * else throw a warning saying this is not supported 
  */
 static void ruby_ibm_db_check_if_cli_func_supported() {
+#ifdef IBM_DB_INFORMIX_ODBC
+  /* SQLCreateDb/SQLDropDb are DB2 CLI extensions; the Informix CSDK ODBC
+   * driver has no libdb2 to probe. createDB/dropDB raise "not supported". */
+  createDbSupported = 0;
+  dropDbSupported   = 0;
+  return;
+#else
 #ifdef _WIN32
    HINSTANCE cliLib = NULL;
 #else
@@ -389,6 +396,7 @@ static void ruby_ibm_db_check_if_cli_func_supported() {
   }
   ruby_ibm_db_check_sqlcreatedb(cliLib);
   DLCLOSE( cliLib );
+#endif /* IBM_DB_INFORMIX_ODBC */
 }
 
 static void ruby_ibm_db_init_globals(struct _ibm_db_globals *ibm_db_globals)
@@ -851,6 +859,12 @@ void ruby_init_ibm_db()
   rb_define_const(mDB, "QUOTED_LITERAL_REPLACEMENT_OFF", INT2NUM(SET_QUOTED_LITERAL_REPLACEMENT_OFF));
   /*Specfies the version of the driver*/
   rb_define_const(mDB, "VERSION",rb_str_new2(MODULE_RELEASE));
+  /*True when built against the Informix CSDK ODBC driver (native SQLI) instead of the DB2 CLI driver (DRDA)*/
+#ifdef IBM_DB_INFORMIX_ODBC
+  rb_define_const(mDB, "INFORMIX_ODBC", Qtrue);
+#else
+  rb_define_const(mDB, "INFORMIX_ODBC", Qfalse);
+#endif
 
   rb_global_variable(&persistent_list);
 
@@ -2277,6 +2291,12 @@ static VALUE _ruby_ibm_db_connect_helper2( connect_helper_args *data ) {
 
 #endif
 #endif
+#ifdef IBM_DB_INFORMIX_ODBC
+      /* This build links the Informix CSDK ODBC driver and only ever speaks to IDS.
+       * The CSDK driver reports SQL_DBMS_NAME as "Informix...", not "IDS/...", so
+       * the probe below would misidentify the server - force the flag instead. */
+      is_informix = 1;
+#else
       /* Get the server name */
 #ifdef UNICODE_SUPPORT_VERSION_H
       server = ALLOC_N(SQLWCHAR, 2048);
@@ -2293,7 +2313,7 @@ static VALUE _ruby_ibm_db_connect_helper2( connect_helper_args *data ) {
       getInfo_args->out_length   =  &out_length;
       getInfo_args->infoType     =  SQL_DBMS_NAME;
       getInfo_args->infoValue    =  (SQLPOINTER)server;
-	  
+
 #ifdef UNICODE_SUPPORT_VERSION_H
       getInfo_args->buff_length  =  2048 * sizeof(SQLWCHAR);
 #else
@@ -2321,6 +2341,7 @@ static VALUE _ruby_ibm_db_connect_helper2( connect_helper_args *data ) {
       ruby_xfree( server );
       getInfo_args = NULL;
       server       = NULL;
+#endif /* IBM_DB_INFORMIX_ODBC */
       rc = SQL_SUCCESS; /*Setting rc to SQL_SUCCESS, because the below block may or may not be executed*/
 
     /* Set SQL_ATTR_REPLACE_QUOTED_LITERALS connection attribute to
