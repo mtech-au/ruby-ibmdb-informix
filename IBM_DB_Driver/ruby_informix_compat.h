@@ -42,6 +42,15 @@
 #define SQL_ATTR_INFO_ACCTSTR     1284
 #endif
 
+/* DB2 trusted-context user-switching attributes (sqlcli1.h). infxcli.h defines
+   only SQL_ATTR_USE_TRUSTED_CONTEXT (2561); the switch attributes are DB2-only. */
+#ifndef SQL_ATTR_TRUSTED_CONTEXT_USERID
+#define SQL_ATTR_TRUSTED_CONTEXT_USERID   2562
+#endif
+#ifndef SQL_ATTR_TRUSTED_CONTEXT_PASSWORD
+#define SQL_ATTR_TRUSTED_CONTEXT_PASSWORD 2563
+#endif
+
 /* DB2 connection-level ping attribute (sqlcli1.h) */
 #ifndef SQL_ATTR_PING_DB
 #define SQL_ATTR_PING_DB          2545

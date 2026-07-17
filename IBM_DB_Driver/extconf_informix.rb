@@ -47,6 +47,9 @@ end
 $CPPFLAGS << ' -DIBM_DB_INFORMIX_ODBC'
 
 $LDFLAGS << " -L#{INFORMIX_ESQL_LIB}" if File.directory?(INFORMIX_ESQL_LIB)
+# DT_RPATH (unlike DT_RUNPATH) applies transitively, so libthcli's own deps
+# (libifgls, libifglx, ...) resolve without LD_LIBRARY_PATH.
+$LDFLAGS << ' -Wl,--disable-new-dtags'
 [INFORMIX_CLI_LIB, INFORMIX_ESQL_LIB, "#{INFORMIXDIR}/lib"].each do |path|
   $LDFLAGS << " -Wl,-rpath,#{path}" if File.directory?(path)
 end

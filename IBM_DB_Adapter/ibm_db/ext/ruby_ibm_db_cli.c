@@ -571,8 +571,15 @@ int _ruby_ibm_db_SQLColAttributes_helper(col_attr_args *data) {
 
   data->stmt_res->is_executing = 1;
 
+#ifdef IBM_DB_INFORMIX_ODBC
+  /* The Informix CLI driver does not export the ODBC 2.x SQLColAttributes
+     entry point; SQLColAttribute accepts the same SQL_COLUMN_* codes. */
+  rc = SQLColAttribute( (SQLHSTMT) data->stmt_res->hstmt, data->col_num,
+                     data->FieldIdentifier, NULL, 0, NULL, (SQLPOINTER) &(data->num_attr) );
+#else
   rc = SQLColAttributes( (SQLHSTMT) data->stmt_res->hstmt, data->col_num,
                      data->FieldIdentifier, NULL, 0, NULL, &(data->num_attr) );
+#endif
 
   data->stmt_res->is_executing = 0;
   data->rc = rc;
@@ -620,9 +627,15 @@ int _ruby_ibm_db_SQLGetLength_helper(get_length_args *data) {
 
   data->stmt_res->is_executing = 1;
 
+#ifdef IBM_DB_INFORMIX_ODBC
+  /* SQLGetLength is a DB2-only CLI API absent from the Informix driver.
+     Fail softly if this path is ever reached. */
+  rc = SQL_ERROR;
+#else
   rc = SQLGetLength( (SQLHSTMT) *( data->new_hstmt ), data->stmt_res->column_info[col_num-1].loc_type,
             data->stmt_res->column_info[col_num-1].lob_loc, data->sLength,
             &(data->stmt_res->column_info[col_num-1].loc_ind) );
+#endif
 
   data->stmt_res->is_executing = 0;
 
@@ -638,10 +651,16 @@ int _ruby_ibm_db_SQLGetSubString_helper(get_subString_args *data) {
 
   data->stmt_res->is_executing = 1;
 
+#ifdef IBM_DB_INFORMIX_ODBC
+  /* SQLGetSubString is a DB2-only CLI API absent from the Informix driver.
+     Fail softly if this path is ever reached. */
+  rc = SQL_ERROR;
+#else
   rc = SQLGetSubString( (SQLHSTMT) *( data->new_hstmt ), data->stmt_res->column_info[col_num-1].loc_type,
             data->stmt_res->column_info[col_num-1].lob_loc, 1, data->forLength, data->targetCType,
             data->buffer, data->buff_length, data->out_length, 
             &(data->stmt_res->column_info[col_num-1].loc_ind) );
+#endif
 
   data->stmt_res->is_executing = 0;
 
@@ -656,7 +675,13 @@ int _ruby_ibm_db_SQLNextResult_helper(next_result_args *data) {
 
   data->stmt_res->is_executing = 1;
 
+#ifdef IBM_DB_INFORMIX_ODBC
+  /* SQLNextResult is a DB2-only CLI API absent from the Informix driver.
+     Fail softly if this path is ever reached. */
+  rc = SQL_ERROR;
+#else
   rc = SQLNextResult( (SQLHSTMT) data->stmt_res->hstmt, (SQLHSTMT) *(data->new_hstmt) );
+#endif
 
   data->stmt_res->is_executing = 0;
   data->rc = rc;
@@ -732,7 +757,7 @@ int _ruby_ibm_db_SQLRowCount_helper(sql_row_count_args *data) {
 
   data->stmt_res->is_executing = 1;
 
-  rc = SQLRowCount( (SQLHSTMT) data->stmt_res->hstmt, (SQLLEN*) &(data->count) );
+  rc = SQLRowCount( (SQLHSTMT) data->stmt_res->hstmt, &(data->count) );
 
   data->stmt_res->is_executing = 0;
 
@@ -827,10 +852,16 @@ int _ruby_ibm_db_SQLBindFileToParam_helper(stmt_handle *stmt_res, param_node *cu
 
   stmt_res->is_executing = 1;
 
+#ifdef IBM_DB_INFORMIX_ODBC
+  /* SQLBindFileToParam is a DB2-only CLI API absent from the Informix driver.
+     Fail softly if this path is ever reached. */
+  rc = SQL_ERROR;
+#else
   rc = SQLBindFileToParam( (SQLHSTMT)stmt_res->hstmt, curr->param_num,
            curr->data_type, (SQLCHAR*)curr->svalue,
            (SQLSMALLINT*)&(curr->ivalue), &(curr->file_options), 
            curr->ivalue, &(curr->bind_indicator) );
+#endif
 
   stmt_res->is_executing = 0;
 

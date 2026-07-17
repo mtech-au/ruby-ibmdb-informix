@@ -71,7 +71,7 @@ typedef struct _param_cache_node {
   SQLSMALLINT nullable;           /* is Nullable */
   SQLSMALLINT scale;              /* Decimal scale */
   SQLUINTEGER file_options;       /* File options if PARAM_FILE */
-  SQLINTEGER  bind_indicator;     /* indicator variable for SQLBindParameter */
+  SQLLEN      bind_indicator;     /* indicator variable for SQLBindParameter */
   int         param_num;              /* param number in stmt */
   int         param_type;             /* Type of param - INP/OUT/INP-OUT/FILE */
   int         size;                   /* Size of param */
@@ -113,7 +113,7 @@ typedef union {
 } ibm_db_row_data_type;
 
 typedef struct {
-  SQLINTEGER            out_length;
+  SQLLEN                out_length;
   ibm_db_row_data_type  data;
 } ibm_db_row_type;
 
@@ -125,11 +125,11 @@ typedef struct _ibm_db_result_set_info_struct {
   SQLCHAR      *name;
 #endif
   SQLSMALLINT  type;
-  SQLUINTEGER  size;
+  SQLULEN      size;
   SQLSMALLINT  scale;
   SQLSMALLINT  nullable;
   SQLINTEGER   lob_loc;
-  SQLINTEGER   loc_ind;
+  SQLLEN       loc_ind;
   SQLSMALLINT  loc_type;
 } ibm_db_result_set_info;
 
@@ -203,7 +203,7 @@ typedef struct _ibm_db_describeparam_args_struct {
   stmt_handle   *stmt_res;
   SQLUSMALLINT  param_no;
   SQLSMALLINT   sql_data_type;
-  SQLUINTEGER   sql_precision;
+  SQLULEN       sql_precision;
   SQLSMALLINT   sql_scale;
   SQLSMALLINT   sql_nullable;
   int 			rc;
@@ -316,7 +316,7 @@ typedef struct _ibm_db_row_col_count_struct {
 */
 typedef struct _ibm_db_row_count_struct {
   stmt_handle    *stmt_res;
-  SQLINTEGER     count;
+  SQLLEN         count;
   int 			 rc;
 } sql_row_count_args;
 
@@ -327,7 +327,7 @@ typedef struct _ibm_db_col_attr_struct {
   stmt_handle    *stmt_res;
   SQLSMALLINT    col_num;
   SQLSMALLINT    FieldIdentifier;
-  SQLINTEGER     num_attr;
+  SQLLEN         num_attr;
   int 			 rc;
 } col_attr_args;
 

@@ -47,6 +47,17 @@ static char *_ruby_ibm_db_instance_name;
 static int  is_systemi, is_informix;        /* 1 == TRUE; 0 == FALSE; */
 static int  createDbSupported, dropDbSupported; /*1 == TRUE; 0 == FALSE*/
 
+/* Throw the accumulated error string as the throw tag. Some failure paths
+   reach the throw without having produced a message; RSTRING_PTR on a
+   non-string VALUE (e.g. Qnil) would crash the interpreter. */
+static void _ruby_ibm_db_throw_error( VALUE error ) {
+  if ( TYPE(error) == T_STRING ) {
+    _ruby_ibm_db_throw_error( error );
+  } else {
+    rb_throw( "<error message could not be retrieved>", Qnil );
+  }
+}
+
 /* Strucure holding the necessary data to be passed to bind the list of elements passed to the execute function*/
 typedef struct _stmt_bind_data_array {
   VALUE         *parameters_array;
@@ -1790,7 +1801,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
         row_data->str_val             =  ALLOC_N(char, bindCol_args->buff_length);
 #endif
         bindCol_args->TargetValuePtr  =  row_data->str_val;
-        bindCol_args->out_length      =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length      =  &stmt_res->row_data[i].out_length;
 
         rc = _ruby_ibm_db_SQLBindCol_helper( bindCol_args );
         if ( rc == SQL_ERROR ) {
@@ -1807,7 +1818,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
       case SQL_LONGVARBINARY:
 #endif /* PASE */
       case SQL_VARBINARY:
-        bindCol_args->out_length        =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length        =  &stmt_res->row_data[i].out_length;
 
         if ( stmt_res->s_bin_mode == CONVERT ) {
           bindCol_args->TargetType      =  SQL_C_CHAR;
@@ -1845,7 +1856,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
         bindCol_args->buff_length     =  stmt_res->column_info[i].size+1;
         row_data->str_val             =  ALLOC_N(char, bindCol_args->buff_length);
         bindCol_args->TargetValuePtr  =  row_data->str_val;
-        bindCol_args->out_length      =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length      =  &stmt_res->row_data[i].out_length;
 
         rc = _ruby_ibm_db_SQLBindCol_helper( bindCol_args );
 
@@ -1859,7 +1870,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
         bindCol_args->TargetType      =  SQL_C_DEFAULT;
         bindCol_args->buff_length     =  sizeof(row_data->s_val);
         bindCol_args->TargetValuePtr  =  &row_data->s_val;
-        bindCol_args->out_length      =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length      =  &stmt_res->row_data[i].out_length;
 
         rc = _ruby_ibm_db_SQLBindCol_helper( bindCol_args );
 
@@ -1873,7 +1884,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
         bindCol_args->TargetType      =  SQL_C_DEFAULT;
         bindCol_args->buff_length     =  sizeof(row_data->i_val);
         bindCol_args->TargetValuePtr  =  &row_data->i_val;
-        bindCol_args->out_length      =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length      =  &stmt_res->row_data[i].out_length;
 
         rc = _ruby_ibm_db_SQLBindCol_helper( bindCol_args );
 
@@ -1888,7 +1899,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
         bindCol_args->TargetType      =  SQL_C_DEFAULT;
         bindCol_args->buff_length     =  sizeof(row_data->f_val);
         bindCol_args->TargetValuePtr  =  &row_data->f_val;
-        bindCol_args->out_length      =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length      =  &stmt_res->row_data[i].out_length;
 
         rc = _ruby_ibm_db_SQLBindCol_helper( bindCol_args );
 
@@ -1902,7 +1913,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
         bindCol_args->TargetType      =  SQL_C_DEFAULT;
         bindCol_args->buff_length     =  sizeof(row_data->d_val);
         bindCol_args->TargetValuePtr  =  &row_data->d_val;
-        bindCol_args->out_length      =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length      =  &stmt_res->row_data[i].out_length;
 
         rc = _ruby_ibm_db_SQLBindCol_helper( bindCol_args );
 
@@ -1919,7 +1930,7 @@ static int _ruby_ibm_db_bind_column_helper(stmt_handle *stmt_res)
                                            stmt_res->column_info[i].scale + 2 + 1;
         row_data->str_val             =  ALLOC_N(char, bindCol_args->buff_length);
         bindCol_args->TargetValuePtr  =  row_data->str_val;
-        bindCol_args->out_length      =  (SQLLEN *) (&stmt_res->row_data[i].out_length);
+        bindCol_args->out_length      =  &stmt_res->row_data[i].out_length;
 
         rc = _ruby_ibm_db_SQLBindCol_helper( bindCol_args );
 
@@ -2422,14 +2433,15 @@ static VALUE _ruby_ibm_db_connect_helper2( connect_helper_args *data ) {
             _ruby_ibm_db_mark_pconn_struct, _ruby_ibm_db_free_pconn_struct,
             conn_res);
 	   data->entry = entry;
+	   return entry;
   } else {
 		data->conn_res = conn_res;		
-		/* return Data_Wrap_Struct(le_conn_struct,
+		/* The ANSI (non-unicode) caller uses this return value directly; the
+		   unicode caller reads data->conn_res/data->entry and ignores it. */
+		return Data_Wrap_Struct(le_conn_struct,
 _ruby_ibm_db_mark_conn_struct, _ruby_ibm_db_free_conn_struct,
 conn_res);
-		*/
   }
-  
 }
 
 /*  */
@@ -2571,7 +2583,7 @@ static VALUE _ruby_ibm_db_connect_helper( int argc, VALUE *argv, int isPersisten
     helper_args = NULL;	
   }
   if( return_value == Qnil ){
-    rb_throw( RSTRING_PTR(error), Qnil );	
+    _ruby_ibm_db_throw_error( error );	
   }  
   return return_value;
 }
@@ -4247,7 +4259,11 @@ VALUE ibm_db_foreign_keys(int argc, VALUE *argv, VALUE self)
   col_metadata_args->owner_len        =  0;
   col_metadata_args->table_name_len   =  0;
   if(!NIL_P(r_is_fk_table)){		
+#ifdef UNICODE_SUPPORT_VERSION_H
 		col_metadata_args->table_type       =  (SQLWCHAR*) "FK_TABLE";
+#else
+		col_metadata_args->table_type       =  (SQLCHAR*) "FK_TABLE";
+#endif
 	}
 
   if (connection) {
@@ -8691,8 +8707,8 @@ VALUE ibm_db_free_stmt(int argc, VALUE *argv, VALUE self)
 }
 /*  */
 
-/*  static RETCODE _ruby_ibm_db_get_data(stmt_handle *stmt_res, int col_num, short ctype, void *buff, int in_length, SQLINTEGER *out_length) */
-static RETCODE _ruby_ibm_db_get_data(stmt_handle *stmt_res, int col_num, short ctype, void *buff, int in_length, SQLINTEGER *out_length)
+/*  static RETCODE _ruby_ibm_db_get_data(stmt_handle *stmt_res, int col_num, short ctype, void *buff, int in_length, SQLLEN *out_length) */
+static RETCODE _ruby_ibm_db_get_data(stmt_handle *stmt_res, int col_num, short ctype, void *buff, int in_length, SQLLEN *out_length)
 {
   RETCODE rc = SQL_SUCCESS;
   get_data_args *getData_args;
@@ -8723,11 +8739,12 @@ static RETCODE _ruby_ibm_db_get_data(stmt_handle *stmt_res, int col_num, short c
 /*  */
 
 /* {{{ static RETCODE _ruby_ibm_db_get_length(stmt_handle* stmt_res, SQLUSMALLINT col_num, SQLINTEGER *sLength) */
-static RETCODE _ruby_ibm_db_get_length(stmt_handle* stmt_res, SQLUSMALLINT col_num, SQLINTEGER *sLength)
+static RETCODE _ruby_ibm_db_get_length(stmt_handle* stmt_res, SQLUSMALLINT col_num, SQLLEN *sLength)
 {
   RETCODE          rc               = SQL_SUCCESS;
   SQLHANDLE        new_hstmt;
   get_length_args  *getLength_args  =  NULL;
+  SQLINTEGER       length32         =  0; /* SQLGetLength writes an SQLINTEGER */
 
   rc = SQLAllocHandle(SQL_HANDLE_STMT, stmt_res->hdbc, &new_hstmt);
 
@@ -8748,9 +8765,11 @@ static RETCODE _ruby_ibm_db_get_length(stmt_handle* stmt_res, SQLUSMALLINT col_n
   getLength_args->new_hstmt    =  &( new_hstmt);
   getLength_args->col_num      =  col_num;
   getLength_args->stmt_res     =  stmt_res;
-  getLength_args->sLength      =  sLength;
+  getLength_args->sLength      =  &length32;
 
   rc = _ruby_ibm_db_SQLGetLength_helper( getLength_args );
+
+  *sLength = length32;
 
   if ( rc == SQL_ERROR ) {
     _ruby_ibm_db_check_sql_errors( stmt_res, DB_STMT, (SQLHSTMT)new_hstmt, SQL_HANDLE_STMT, rc, 1, NULL, NULL, -1, 1, 0 );
@@ -8769,11 +8788,12 @@ static RETCODE _ruby_ibm_db_get_length(stmt_handle* stmt_res, SQLUSMALLINT col_n
 /* }}} */
      
 /* {{{ static RETCODE _ruby_ibm_db_get_data2(stmt_handle *stmt_res, int col_num, short ctype, void *buff, int in_length, SQLINTEGER *out_length) */
-static RETCODE _ruby_ibm_db_get_data2(stmt_handle *stmt_res, SQLUSMALLINT col_num, SQLSMALLINT ctype, SQLPOINTER buff, SQLLEN read_length, SQLLEN buff_length, SQLINTEGER *out_length)
+static RETCODE _ruby_ibm_db_get_data2(stmt_handle *stmt_res, SQLUSMALLINT col_num, SQLSMALLINT ctype, SQLPOINTER buff, SQLLEN read_length, SQLLEN buff_length, SQLLEN *out_length)
 {
   RETCODE rc = SQL_SUCCESS;
   SQLHANDLE new_hstmt;
   get_subString_args *getSubString_args;
+  SQLINTEGER out_length32 = 0; /* SQLGetSubString writes an SQLINTEGER */
 
   rc = SQLAllocHandle(SQL_HANDLE_STMT, stmt_res->hdbc, &new_hstmt);
 
@@ -8799,9 +8819,11 @@ static RETCODE _ruby_ibm_db_get_data2(stmt_handle *stmt_res, SQLUSMALLINT col_nu
   getSubString_args->targetCType  =  ctype;
   getSubString_args->buffer       =  buff;
   getSubString_args->buff_length  =  buff_length;
-  getSubString_args->out_length   =  out_length;
+  getSubString_args->out_length   =  &out_length32;
   
   rc = _ruby_ibm_db_SQLGetSubString_helper( getSubString_args );
+
+  *out_length = out_length32;
 
   if ( rc == SQL_ERROR ) {
     _ruby_ibm_db_check_sql_errors( stmt_res, DB_STMT, (SQLHSTMT)new_hstmt, SQL_HANDLE_STMT, rc, 1, NULL, NULL, -1, 1, 0 );
@@ -8856,7 +8878,7 @@ static VALUE _ruby_ibm_db_result_helper(ibm_db_result_args *data) {
   SQLPOINTER    out_ptr;
   double        double_val;
 
-  SQLINTEGER    in_length, out_length      =  -10; /*Initialize out_length to some meaningless value*/
+  SQLLEN        in_length, out_length      =  -10; /*Initialize out_length to some meaningless value*/
   SQLSMALLINT   column_type, lob_bind_type =  SQL_C_BINARY;
   SQLINTEGER    long_val;
 
@@ -9161,7 +9183,7 @@ static VALUE _ruby_ibm_db_result_helper(ibm_db_result_args *data) {
       break;
     case SQL_XML:
 
-      rc      =  _ruby_ibm_db_get_data(stmt_res, col_num+1, SQL_C_BINARY, NULL, 0, (SQLINTEGER *)&in_length);
+      rc      =  _ruby_ibm_db_get_data(stmt_res, col_num+1, SQL_C_BINARY, NULL, 0, &in_length);
 
       if ( rc == SQL_ERROR ) {
 		data->return_value = Qfalse;
@@ -9292,7 +9314,7 @@ static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
   SQLSMALLINT column_type, lob_bind_type = SQL_C_BINARY;
 
   ibm_db_row_data_type  *row_data;
-  SQLINTEGER            out_length, tmp_length;
+  SQLLEN                out_length, tmp_length;
   SQLPOINTER            out_ptr;
 
   char  *tmpStr       =  NULL;
@@ -9767,7 +9789,7 @@ static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
           }
 
           out_ptr =  NULL;
-          rc      =  _ruby_ibm_db_get_data(stmt_res, i+1, SQL_C_BINARY, NULL, 0, (SQLINTEGER *)&tmp_length);
+          rc      =  _ruby_ibm_db_get_data(stmt_res, i+1, SQL_C_BINARY, NULL, 0, &tmp_length);
 
           if ( rc == SQL_ERROR ) {
             if( stmt_res != NULL && stmt_res->ruby_stmt_err_msg != NULL ) {
@@ -10095,7 +10117,7 @@ VALUE ibm_db_fetch_row(int argc, VALUE *argv, VALUE self)
   }
 
   if( error != Qnil && ret_val == Qnil ) {
-    rb_throw( RSTRING_PTR(error),Qnil );
+    _ruby_ibm_db_throw_error( error );
   }
 
   return ret_val;
@@ -10158,7 +10180,7 @@ VALUE ibm_db_result_cols(int argc, VALUE *argv, VALUE self) {
         error = rb_str_new2("Column information cannot be retrieved: <error message could not be retrieved>");
 #endif
       }
-      rb_throw( RSTRING_PTR(error), Qnil );
+      _ruby_ibm_db_throw_error( error );
     }
   }
 
@@ -10264,7 +10286,7 @@ VALUE ibm_db_fetch_assoc(int argc, VALUE *argv, VALUE self) {
   }
 
   if( error != Qnil && ret_val == Qnil ) {
-    rb_throw( RSTRING_PTR(error), Qnil );
+    _ruby_ibm_db_throw_error( error );
   }
 
   return ret_val;
@@ -10352,7 +10374,7 @@ VALUE ibm_db_fetch_object(int argc, VALUE *argv, VALUE self)
   }
 
   if( error != Qnil && ret_val == Qnil ) {
-    rb_throw( RSTRING_PTR(error), Qnil );
+    _ruby_ibm_db_throw_error( error );
   }
 
   if (RTEST(row_res->hash)) {
@@ -10437,7 +10459,7 @@ VALUE ibm_db_fetch_array(int argc, VALUE *argv, VALUE self)
   }
 
   if( error != Qnil && ret_val == Qnil ) {
-    rb_throw( RSTRING_PTR(error), Qnil );
+    _ruby_ibm_db_throw_error( error );
   }
 
   return ret_val;
@@ -10514,7 +10536,7 @@ VALUE ibm_db_fetch_both(int argc, VALUE *argv, VALUE self)
   }
 
   if( error != Qnil && ret_val == Qnil ) {
-    rb_throw( RSTRING_PTR(error), Qnil );
+    _ruby_ibm_db_throw_error( error );
   }
 
   return ret_val;
@@ -10627,9 +10649,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 
 #ifdef UNICODE_SUPPORT_VERSION_H
@@ -10648,9 +10672,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   memset(buffer11, '\0', sizeof(buffer11));
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@DBMS_VER", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer11, out_length));
@@ -10670,9 +10696,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@DB_CODEPAGE", INT2NUM(bufferint32));
   }
@@ -10688,9 +10716,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
    rb_iv_set(return_value, "@DB_NAME", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -10710,9 +10740,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@INST_NAME", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -10731,9 +10763,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@SPECIAL_CHARS", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -10753,9 +10787,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     VALUE keywordsStr, keywordsArray;
 #ifdef UNICODE_SUPPORT_VERSION_H
@@ -10778,9 +10814,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     VALUE dft_isolation = Qnil;
     if( bitmask & SQL_TXN_READ_UNCOMMITTED ) {
@@ -10830,9 +10868,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   bitmask = 0;
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     VALUE array;
 
@@ -10885,9 +10925,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   bufferint32 = 0;
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     VALUE conformance = Qnil;
     switch (bufferint32) {
@@ -10934,9 +10976,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   memset(buffer11, '\0', sizeof(buffer11));
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     if( rb_str_equal(_ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer11, out_length), _ruby_ibm_db_export_char_to_utf8_rstr("Y")) ) {
@@ -10958,9 +11002,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@IDENTIFIER_QUOTE_CHAR", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer11, out_length));
@@ -10979,9 +11025,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     if( rb_str_equal(_ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer11, out_length), _ruby_ibm_db_export_char_to_utf8_rstr("Y")) ) {
@@ -11002,9 +11050,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   bufferint16                =  0;
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_COL_NAME_LEN", INT2NUM(bufferint16));
   }
@@ -11019,9 +11069,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_ROW_SIZE", INT2NUM(bufferint32));
   }
@@ -11036,9 +11088,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_IDENTIFIER_LEN", INT2NUM(bufferint16));
   }
@@ -11053,9 +11107,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_INDEX_SIZE", INT2NUM(bufferint32));
   }
@@ -11070,9 +11126,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_PROC_NAME_LEN", INT2NUM(bufferint16));
   }
@@ -11088,9 +11146,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_SCHEMA_NAME_LEN", INT2NUM(bufferint16));
   }
@@ -11105,9 +11165,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_STATEMENT_LEN", INT2NUM(bufferint32));
   }
@@ -11122,9 +11184,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@MAX_TABLE_NAME_LEN", INT2NUM(bufferint16));
   }
@@ -11139,9 +11203,11 @@ static VALUE ibm_db_server_info_helper( get_info_args *getInfo_args ) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     VALUE rv = Qnil;
     switch (bufferint16) {
@@ -11317,9 +11383,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@DRIVER_NAME", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -11338,9 +11406,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@DRIVER_VER", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -11359,9 +11429,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@DATA_SOURCE_NAME", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -11380,9 +11452,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@DRIVER_ODBC_VER", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -11402,9 +11476,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
 #ifdef UNICODE_SUPPORT_VERSION_H
     rb_iv_set(return_value, "@ODBC_VER", _ruby_ibm_db_export_sqlwchar_to_utf8_rstr(buffer255, out_length));
@@ -11424,9 +11500,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     VALUE conformance = Qnil;
     switch (bufferint16) {
@@ -11468,9 +11546,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@APPL_CODEPAGE", INT2NUM(bufferint32));
   }
@@ -11485,9 +11565,11 @@ static VALUE ibm_db_client_info_helper( get_info_args *getInfo_args) {
   rc = _ruby_ibm_db_SQLGetInfo_helper( getInfo_args );
 
   if ( rc == SQL_ERROR ) {
+#ifndef IBM_DB_INFORMIX_ODBC
     _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 0 );
 	getInfo_args->return_value = Qfalse;
     return Qfalse;
+#endif /* Informix: info type unsupported by the CSDK driver - leave attribute unset */
   } else {
     rb_iv_set(return_value, "@CONN_CODEPAGE", INT2NUM(bufferint32));
   }
