@@ -87,25 +87,44 @@ preference:
 #### Route A (preferred): CSDK 4.50 tarball from the internal S3 bucket
 
 The CSDK 4.50.13.10 installer tarballs (x86_64 **and** aarch64, ~75 MB each)
-are hosted in a private company S3 bucket. Do **not** commit these tarballs to
-project repositories — the CSDK is IBM-licensed proprietary software and the
-bucket is the single controlled distribution point.
+are hosted in the private company S3 bucket **`monkey-api-ibm-csdk`**
+(`ap-southeast-2`), keys at the bucket root:
+
+- `ibm.csdk.4.50.13.10.Linux.64.x86_64.tar`
+- `ibm.csdk.4.50.13.10.Linux.64.aarch64.tar`
+
+The bucket blocks all public access, so builds need AWS credentials with read
+access. Do **not** commit these tarballs to project repositories — the CSDK is
+IBM-licensed proprietary software and the bucket is the single controlled
+distribution point.
+
+Generate presigned URLs just before building (one per architecture you build):
+
+```bash
+aws s3 presign s3://monkey-api-ibm-csdk/ibm.csdk.4.50.13.10.Linux.64.x86_64.tar --expires-in 3600
+aws s3 presign s3://monkey-api-ibm-csdk/ibm.csdk.4.50.13.10.Linux.64.aarch64.tar --expires-in 3600
+```
 
 ```dockerfile
 FROM ruby:3.2 AS app
 ARG TARGETARCH
-# Presigned URL or bucket path injected at build time; needs read access to the bucket.
-ARG CSDK_BASE_URL   # e.g. https://<bucket>.s3.<region>.amazonaws.com/csdk
+# Presigned URLs from `aws s3 presign` (bucket is private)
+ARG CSDK_URL_AMD64
+ARG CSDK_URL_ARM64
 # Keep INFORMIXDIR identical between build and runtime — the rpath is baked in.
 ENV INFORMIXDIR=/opt/informix IBM_DB_INFORMIX=1
-RUN case "$TARGETARCH" in amd64) A=x86_64 ;; arm64) A=aarch64 ;; esac \
- && curl -fsSL "$CSDK_BASE_URL/ibm.csdk.4.50.13.10.Linux.64.${A}.tar" -o /tmp/csdk.tar \
+RUN case "$TARGETARCH" in amd64) URL="$CSDK_URL_AMD64" ;; arm64) URL="$CSDK_URL_ARM64" ;; esac \
+ && curl -fsSL "$URL" -o /tmp/csdk.tar \
  && mkdir /tmp/csdk && tar -xf /tmp/csdk.tar -C /tmp/csdk \
  && /tmp/csdk/installclientsdk -i silent -DLICENSE_ACCEPTED=TRUE \
       -DUSER_INSTALL_DIR=$INFORMIXDIR \
  && rm -rf /tmp/csdk /tmp/csdk.tar
 # ... bundle install ...
 ```
+
+Alternative for CI with an IAM role: `aws s3 cp` the tarball into the build
+context in a pipeline step before `docker build`, then `COPY` it in (and keep
+the tarball out of the final image / git via .dockerignore + .gitignore).
 
 Notes:
 - Running the installer implies acceptance of the IBM license
