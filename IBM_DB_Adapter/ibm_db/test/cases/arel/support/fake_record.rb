@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/enumerable"
-
 require "date"
+
 module FakeRecord
   class Column < Struct.new(:name, :type)
   end
@@ -11,7 +11,7 @@ module FakeRecord
     attr_reader :tables
     attr_accessor :visitor
 
-    def initialize(visitor = nil)
+    def initialize
       @tables = %w{ users photos developers products}
       @columns = {
         "users" => [
@@ -33,7 +33,7 @@ module FakeRecord
         "users" => "id",
         "products" => "id"
       }
-      @visitor = visitor
+      @visitor = Arel::Visitors::ToSql.new(self)
     end
 
     def columns_hash(table_name)
@@ -86,38 +86,39 @@ module FakeRecord
         "'#{thing.to_s.gsub("'", "\\\\'")}'"
       end
     end
+
+    def cast_bound_value(thing)
+      thing
+    end
   end
 
   class ConnectionPool
-    class Spec < Struct.new(:adapter, keyword_init: true)
+    def initialize
+      @connection = Connection.new
     end
 
-    attr_reader :spec, :connection
-
-    def initialize
-      @spec = Spec.new(adapter: "america")
-      @connection = Connection.new
-      @connection.visitor = Arel::Visitors::ToSql.new(connection)
+    def lease_connection
+      @connection
     end
 
     def with_connection
-      yield connection
+      yield @connection
     end
 
     def table_exists?(name)
-      connection.tables.include? name.to_s
+      @connection.tables.include? name.to_s
     end
 
     def columns_hash
-      connection.columns_hash
+      @connection.columns_hash
     end
 
     def schema_cache
-      connection
+      @connection
     end
 
     def quote(thing)
-      connection.quote thing
+      @connection.quote thing
     end
   end
 
@@ -128,8 +129,12 @@ module FakeRecord
       @connection_pool = ConnectionPool.new
     end
 
-    def connection
-      connection_pool.connection
+    def with_connection(...)
+      connection_pool.with_connection(...)
+    end
+
+    def lease_connection
+      connection_pool.lease_connection
     end
   end
 end

@@ -19,11 +19,23 @@ module ARTest
   end
 
   def self.connect
-    ActiveRecord::Base.legacy_connection_handling = false
+    ActiveRecord.async_query_executor = :global_thread_pool
     puts "Using #{connection_name}"
-    ActiveRecord::Base.logger = ActiveSupport::Logger.new("debug.log", 0, 100 * 1024 * 1024)
+
+    if ENV["BUILDKITE"]
+      ActiveRecord::Base.logger = nil
+    else
+      ActiveRecord::Base.logger = ActiveSupport::Logger.new("debug.log", 1, 100.megabytes)
+    end
+
     ActiveRecord::Base.configurations = test_configuration_hashes
     ActiveRecord::Base.establish_connection :arunit
     ARUnit2Model.establish_connection :arunit2
+
+    arunit_adapter = ActiveRecord::Base.lease_connection.pool.db_config.adapter
+
+    unless connection_name.include?(arunit_adapter)
+      raise ArgumentError, "The connection name did not match the adapter name. Connection name is '#{connection_name}' and the adapter name is '#{arunit_adapter}'."
+    end
   end
 end

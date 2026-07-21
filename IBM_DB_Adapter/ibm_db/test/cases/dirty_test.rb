@@ -362,7 +362,7 @@ class DirtyTest < ActiveRecord::TestCase
     old_updated_on = 1.hour.ago.beginning_of_day
 
     with_partial_writes Pirate, false do
-      assert_queries(2) { 2.times { pirate.save! } }
+      assert_queries_count(6) { 2.times { pirate.save! } }
       Pirate.where(id: pirate.id).update_all(updated_on: old_updated_on)
     end
 
@@ -370,7 +370,7 @@ class DirtyTest < ActiveRecord::TestCase
       assert_no_queries { 2.times { pirate.save! } }
       assert_equal old_updated_on, pirate.reload.updated_on
 
-      assert_queries(1) { pirate.catchphrase = "bar"; pirate.save! }
+      assert_queries_count(3) { pirate.catchphrase = "bar"; pirate.save! }
       assert_not_equal old_updated_on, pirate.reload.updated_on
     end
   end
@@ -379,7 +379,7 @@ class DirtyTest < ActiveRecord::TestCase
     person = Person.new(first_name: "foo")
 
     with_partial_writes Person, false do
-      assert_queries(2) { 2.times { person.save! } }
+      assert_queries_count(6) { 2.times { person.save! } }
       Person.where(id: person.id).update_all(first_name: "baz")
     end
 
@@ -389,7 +389,7 @@ class DirtyTest < ActiveRecord::TestCase
       assert_no_queries { 2.times { person.save! } }
       assert_equal old_lock_version, person.reload.lock_version
 
-      assert_queries(1) { person.first_name = "bar"; person.save! }
+      assert_queries_count(3) { person.first_name = "bar"; person.save! }
       assert_not_equal old_lock_version, person.reload.lock_version
     end
   end
@@ -460,44 +460,44 @@ class DirtyTest < ActiveRecord::TestCase
 
   def test_save_should_store_serialized_attributes_even_with_partial_writes
     with_partial_writes(Topic) do
-      topic = Topic.create!(content: { a: "a" })
+      topic = Topic.create!(content: { "a" => "a" })
 
       assert_not_predicate topic, :changed?
 
-      topic.content[:b] = "b"
+      topic.content["b"] = "b"
 
       assert_predicate topic, :changed?
 
       topic.save!
 
       assert_not_predicate topic, :changed?
-      assert_equal "b", topic.content[:b]
+      assert_equal "b", topic.content["b"]
 
       topic.reload
 
-      assert_equal "b", topic.content[:b]
+      assert_equal "b", topic.content["b"]
     end
   end
 
   def test_save_always_should_update_timestamps_when_serialized_attributes_are_present
     with_partial_writes(Topic) do
-      topic = Topic.create!(content: { a: "a" })
+      topic = Topic.create!(content: { "a" => "a" })
       topic.save!
 
       updated_at = topic.updated_at
       travel(1.second) do
-        topic.content[:hello] = "world"
+        topic.content["hello"] = "world"
         topic.save!
       end
 
       assert_not_equal updated_at, topic.updated_at
-      assert_equal "world", topic.content[:hello]
+      assert_equal "world", topic.content["hello"]
     end
   end
 
   def test_save_should_not_save_serialized_attribute_with_partial_writes_if_not_present
     with_partial_writes(Topic) do
-      topic = Topic.create!(author_name: "Bill", content: { a: "a" })
+      topic = Topic.create!(author_name: "Bill", content: { "a" => "a" })
       topic = Topic.select("id, author_name").find(topic.id)
       topic.update_columns author_name: "John"
       assert_not_nil topic.reload.content
@@ -505,11 +505,11 @@ class DirtyTest < ActiveRecord::TestCase
   end
 
   def test_changes_to_save_should_not_mutate_array_of_hashes
-    topic = Topic.new(author_name: "Bill", content: [{ a: "a" }])
+    topic = Topic.new(author_name: "Bill", content: [{ "a" => "a" }])
 
     topic.changes_to_save
 
-    assert_equal [{ a: "a" }], topic.content
+    assert_equal [{ "a" => "a" }], topic.content
   end
 
   def test_previous_changes
@@ -608,19 +608,18 @@ class DirtyTest < ActiveRecord::TestCase
 
   class Testings < ActiveRecord::Base; end
   def test_field_named_field
-    ActiveRecord::Base.connection.create_table :testings do |t|
+    ActiveRecord::Base.lease_connection.create_table :testings do |t|
       t.string :field
     end
     assert_nothing_raised do
       Testings.new.attributes
     end
   ensure
-    ActiveRecord::Base.connection.drop_table :testings rescue nil
+    ActiveRecord::Base.lease_connection.drop_table :testings rescue nil
     ActiveRecord::Base.clear_cache!
   end
 
   def test_datetime_attribute_can_be_updated_with_fractional_seconds
-    skip "Fractional seconds are not supported" unless supports_datetime_with_precision?
     in_time_zone "Paris" do
       target = Class.new(ActiveRecord::Base)
       target.table_name = "topics"
@@ -630,7 +629,7 @@ class DirtyTest < ActiveRecord::TestCase
       topic = target.create(written_on: written_on)
       topic.written_on += 0.3
 
-      assert topic.written_on_changed?, "Fractional second update not detected"
+      assert_predicate topic, :written_on_changed?, "Fractional second update not detected"
     end
   end
 
@@ -645,11 +644,11 @@ class DirtyTest < ActiveRecord::TestCase
   test "partial insert" do
     with_partial_writes Person do
       jon = nil
-      assert_sql(/first_name/i) do
-        jon = Person.create! first_name: "Jon"
+      assert_no_queries_match(/followers_count/) do
+        assert_queries_match(/first_name/) do
+          jon = Person.create! first_name: "Jon"
+        end
       end
-
-      assert ActiveRecord::SQLCounter.log_all.none? { |sql| sql.include?("followers_count") }
 
       jon.reload
       assert_equal "Jon", jon.first_name
@@ -941,13 +940,71 @@ class DirtyTest < ActiveRecord::TestCase
     assert_not_predicate person, :changed?
   end
 
+  test "partial insert off with unchanged default function attribute" do
+    skip "IBM_DB/DB2: column DEFAULT expressions do not support timezone arithmetic; " \
+         "CURRENT_TIMESTAMP DEFAULT stores local time and cannot be adjusted to UTC." if current_adapter?(:IBM_DBAdapter)
+    with_partial_writes Aircraft, false do
+      aircraft = Aircraft.new(name: "Boeing")
+      assert_equal "Boeing", aircraft.name
+
+      aircraft.save!
+      aircraft.reload
+
+      assert_equal "Boeing", aircraft.name
+      assert_in_delta Time.now, aircraft.manufactured_at, 1.1
+    end
+  end
+
+  test "partial insert off with changed default function attribute" do
+    with_partial_writes Aircraft, false do
+      manufactured_at = 1.years.ago
+      aircraft = Aircraft.new(name: "Boeing2", manufactured_at: manufactured_at)
+
+      assert_equal "Boeing2", aircraft.name
+      assert_equal manufactured_at.to_i, aircraft.manufactured_at.to_i
+
+      aircraft.save!
+      aircraft.reload
+
+      assert_equal "Boeing2", aircraft.name
+      assert_equal manufactured_at.utc.strftime("%Y-%m-%d %H:%M:%S"), aircraft.manufactured_at.strftime("%Y-%m-%d %H:%M:%S")
+    end
+  end
+
+  if current_adapter?(:PostgreSQLAdapter) && supports_identity_columns?
+    test "partial insert off with changed composite identity primary key attribute" do
+      klass = Class.new(ActiveRecord::Base) do
+        self.table_name = "cpk_postgresql_identity_table"
+      end
+
+      with_partial_writes(klass, false) do
+        record = klass.create!(another_id: 10)
+        assert_equal 10, record.another_id
+        assert_not_nil record.id
+      end
+    end
+  end
+
+  test "attribute_changed? properly type casts enum values" do
+    parrot = LiveParrot.create!(name: "Scipio", breed: :african)
+
+    parrot.breed = :australian
+
+    assert parrot.breed_changed?(from: "african", to: "australian")
+    assert parrot.breed_changed?(from: :african, to: :australian)
+    assert parrot.breed_changed?(from: 0, to: 1)
+  end
+
   private
     def with_partial_writes(klass, on = true)
-      old = klass.partial_writes?
-      klass.partial_writes = on
+      old_inserts = klass.partial_inserts?
+      old_updates = klass.partial_updates?
+      klass.partial_inserts = on
+      klass.partial_updates = on
       yield
     ensure
-      klass.partial_writes = old
+      klass.partial_inserts = old_inserts
+      klass.partial_updates = old_updates
     end
 
     def check_pirate_after_save_failure(pirate)

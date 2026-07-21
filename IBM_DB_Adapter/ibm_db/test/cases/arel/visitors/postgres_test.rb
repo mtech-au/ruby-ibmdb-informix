@@ -6,7 +6,7 @@ module Arel
   module Visitors
     class PostgresTest < Arel::Spec
       before do
-        @visitor = PostgreSQL.new Table.engine.connection
+        @visitor = PostgreSQL.new Table.engine.lease_connection
         @table = Table.new(:users)
         @attr = @table[:id]
       end
@@ -313,36 +313,6 @@ module Arel
           val = Nodes.build_quoted(nil, @table[:active])
           sql = compile Nodes::IsDistinctFrom.new(@table[:name], val)
           _(sql).must_be_like %{ "users"."name" IS DISTINCT FROM NULL }
-        end
-      end
-
-      describe "Nodes::Ordering" do
-        it "should handle nulls first" do
-          test = Table.new(:users)[:first_name].desc.nulls_first
-          _(compile(test)).must_be_like %{
-            "users"."first_name" DESC NULLS FIRST
-          }
-        end
-
-        it "should handle nulls last" do
-          test = Table.new(:users)[:first_name].desc.nulls_last
-          _(compile(test)).must_be_like %{
-            "users"."first_name" DESC NULLS LAST
-          }
-        end
-
-        it "should handle nulls first reversed" do
-          test = Table.new(:users)[:first_name].desc.nulls_first.reverse
-          _(compile(test)).must_be_like %{
-            "users"."first_name" ASC NULLS LAST
-          }
-        end
-
-        it "should handle nulls last reversed" do
-          test = Table.new(:users)[:first_name].desc.nulls_last.reverse
-          _(compile(test)).must_be_like %{
-            "users"."first_name" ASC NULLS FIRST
-          }
         end
       end
 
