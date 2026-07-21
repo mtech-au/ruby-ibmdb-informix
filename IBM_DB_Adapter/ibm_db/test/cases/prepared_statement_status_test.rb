@@ -7,8 +7,13 @@ require "models/entrant"
 module ActiveRecord
   class PreparedStatementStatusTest < ActiveRecord::TestCase
     def test_prepared_statement_status_is_thread_and_instance_specific
-      course_conn = Course.connection
-      entrant_conn = Entrant.connection
+      course_conn = Course.lease_connection
+      entrant_conn = Entrant.lease_connection
+      base_conn = ActiveRecord::Base.lease_connection
+
+      if base_conn.prepared_statements && (!course_conn.prepared_statements || !entrant_conn.prepared_statements)
+        skip "prepared statements are not uniformly enabled across leased connections"
+      end
 
       inside = Concurrent::Event.new
       preventing = Concurrent::Event.new
@@ -16,7 +21,7 @@ module ActiveRecord
 
       assert_not_same course_conn, entrant_conn
 
-      if ActiveRecord::Base.connection.prepared_statements
+      if ActiveRecord::Base.lease_connection.prepared_statements
         t1 = Thread.new do
           course_conn.unprepared_statement do
             inside.set

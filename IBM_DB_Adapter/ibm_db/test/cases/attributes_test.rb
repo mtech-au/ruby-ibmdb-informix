@@ -27,6 +27,7 @@ module ActiveRecord
 
       data.overloaded_float = "1.1"
       data.unoverloaded_float = "1.1"
+
       assert_equal 1, data.overloaded_float
       assert_equal 1.1, data.unoverloaded_float
     end
@@ -50,6 +51,14 @@ module ActiveRecord
       assert_equal 3, data.overloaded_float
     end
 
+    test ".type_for_attribute supports attribute aliases" do
+      with_alias = Class.new(OverloadedType) do
+        alias_attribute :overloaded_float, :x
+      end
+
+      assert_equal with_alias.type_for_attribute(:overloaded_float), with_alias.type_for_attribute(:x)
+    end
+
     test "overloaded properties with limit" do
       assert_equal 50, OverloadedType.type_for_attribute("overloaded_string_with_limit").limit
       assert_equal 255, UnoverloadedType.type_for_attribute("overloaded_string_with_limit").limit
@@ -65,6 +74,15 @@ module ActiveRecord
 
       assert_nil UnoverloadedType.new.overloaded_string_with_limit
       assert_equal "the overloaded default", klass.new.overloaded_string_with_limit
+    end
+
+    test "attributes with overridden types keep their type when a default value is configured separately" do
+      child = Class.new(OverloadedType) do
+        attribute :overloaded_float, default: "123"
+      end
+
+      assert_equal OverloadedType.type_for_attribute("overloaded_float"), child.type_for_attribute("overloaded_float")
+      assert_equal 123, child.new.overloaded_float
     end
 
     test "extra options are forwarded to the type caster constructor" do
@@ -294,6 +312,15 @@ module ActiveRecord
       assert_equal 123, model.non_existent_decimal
     end
 
+    test "attributes not backed by database columns keep their type when a default value is configured separately" do
+      child = Class.new(OverloadedType) do
+        attribute :non_existent_decimal, default: "123"
+      end
+
+      assert_equal OverloadedType.type_for_attribute("non_existent_decimal"), child.type_for_attribute("non_existent_decimal")
+      assert_equal 123, child.new.non_existent_decimal
+    end
+
     test "attributes not backed by database columns properly interact with mutation and dirty" do
       child = Class.new(ActiveRecord::Base) do
         self.table_name = "topics"
@@ -316,7 +343,7 @@ module ActiveRecord
     end
 
     test "attributes not backed by database columns appear in inspect" do
-      inspection = OverloadedType.new.inspect
+      inspection = OverloadedType.new.full_inspect
 
       assert_includes inspection, "non_existent_decimal"
     end
@@ -327,6 +354,20 @@ module ActiveRecord
       end
       assert_equal 1, klass.new(no_type: 1).no_type
       assert_equal "foo", klass.new(no_type: "foo").no_type
+    end
+
+    test "attributes do not require a connection is established" do
+      assert_not_called(ActiveRecord::Base, :lease_connection) do
+        Class.new(OverloadedType) do
+          attribute :foo, :string
+        end
+      end
+    end
+
+    test "unknown type error is raised" do
+      assert_raise(ArgumentError) do
+        OverloadedType.attribute :foo, :unknown
+      end
     end
 
     test "immutable_strings_by_default changes schema inference for string columns" do

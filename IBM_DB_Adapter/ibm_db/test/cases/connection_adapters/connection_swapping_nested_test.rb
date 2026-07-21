@@ -14,6 +14,16 @@ module ActiveRecord
         clean_up_connection_handler
       end
 
+      def skip_unless_sqlite3_gem_available
+        @prev_configs ||= ActiveRecord::Base.configurations
+
+        skip "DB2 limitation: sqlite3-based nested connection swapping scenarios are not supported under ibm_db adapter runs" if current_adapter?(:IBM_DBAdapter)
+
+        return if Gem::Specification.find_all_by_name("sqlite3", ">= 2.1").any?
+
+        skip "requires sqlite3 gem (>= 2.1)"
+      end
+
       class PrimaryBase < ActiveRecord::Base
         self.abstract_class = true
       end
@@ -44,6 +54,8 @@ module ActiveRecord
 
       unless in_memory_db?
         def test_roles_can_be_swapped_granularly
+          skip_unless_sqlite3_gem_available
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -116,6 +128,8 @@ module ActiveRecord
         end
 
         def test_shards_can_be_swapped_granularly
+          skip_unless_sqlite3_gem_available
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -156,17 +170,17 @@ module ActiveRecord
             assert_equal "secondary", SecondaryBase.connection_pool.db_config.name
 
             # Switch only primary to shard_one
-            PrimaryBase.connected_to(role: global_role, shard: :shard_one) do
+            PrimaryBase.connected_to(shard: :shard_one) do
               assert_equal "primary_shard_one", PrimaryBase.connection_pool.db_config.name
               assert_equal "secondary", SecondaryBase.connection_pool.db_config.name
 
               # Switch global to shard_one
-              ActiveRecord::Base.connected_to(role: global_role, shard: :shard_one) do
+              ActiveRecord::Base.connected_to(shard: :shard_one) do
                 assert_equal "primary_shard_one", PrimaryBase.connection_pool.db_config.name
                 assert_equal "secondary_shard_one", SecondaryBase.connection_pool.db_config.name
 
                 # Switch only secondary to shard_two
-                SecondaryBase.connected_to(role: global_role, shard: :shard_two) do
+                SecondaryBase.connected_to(shard: :shard_two) do
                   assert_equal "primary_shard_one", PrimaryBase.connection_pool.db_config.name
                   assert_equal "secondary_shard_two", SecondaryBase.connection_pool.db_config.name
                 end
@@ -183,7 +197,7 @@ module ActiveRecord
               end
 
               # Switch everything to default
-              ActiveRecord::Base.connected_to(role: global_role, shard: :default) do
+              ActiveRecord::Base.connected_to(shard: :default) do
                 assert_equal "primary", PrimaryBase.connection_pool.db_config.name
                 assert_equal "secondary", SecondaryBase.connection_pool.db_config.name
               end
@@ -203,7 +217,63 @@ module ActiveRecord
           ENV["RAILS_ENV"] = previous_env
         end
 
+        def test_shard_swapping_prohibition_exception_recovery
+          skip_unless_sqlite3_gem_available
+
+          previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
+
+          config = {
+            "default_env" => {
+              "primary" => { "adapter" => "sqlite3", "database" => "test/db/primary.sqlite3" },
+              "primary_shard_one" => { "adapter" => "sqlite3", "database" => "test/db/primary_shard_one.sqlite3" },
+              "primary_shard_two" => { "adapter" => "sqlite3", "database" => "test/db/primary_shard_two.sqlite3" },
+            }
+          }
+
+          @prev_configs, ActiveRecord::Base.configurations = ActiveRecord::Base.configurations, config
+
+          PrimaryBase.connects_to(shards: {
+            default: { writing: :primary },
+            shard_one: { writing: :primary_shard_one }
+          })
+
+          global_role = :writing
+
+          # Switch everything to default
+          ActiveRecord::Base.connected_to(role: global_role, shard: :default) do
+            assert_equal "primary", PrimaryBase.connection_pool.db_config.name
+
+            # Switch only primary to shard_one
+            PrimaryBase.connected_to(shard: :shard_one) do
+              assert_equal "primary_shard_one", PrimaryBase.connection_pool.db_config.name
+
+              PrimaryBase.prohibit_shard_swapping do
+                e = assert_raises(ArgumentError) do
+                  PrimaryBase.connected_to(shard: :shard_two) { }
+                end
+                assert_match(/cannot swap/, e.message)
+              end
+
+              assert_equal "primary_shard_one", PrimaryBase.connection_pool.db_config.name
+
+              PrimaryBase.prohibit_shard_swapping do
+                e = assert_raises(ArgumentError) do
+                  ActiveRecord::Base.connected_to_many([PrimaryBase], shard: :shard_two, role: :writing) { }
+                end
+                assert_match(/cannot swap/, e.message)
+              end
+
+              assert_equal "primary_shard_one", PrimaryBase.connection_pool.db_config.name
+            end
+          end
+        ensure
+          ActiveRecord::Base.configurations = @prev_configs
+          ActiveRecord::Base.establish_connection(:arunit)
+          ENV["RAILS_ENV"] = previous_env
+        end
         def test_roles_and_shards_can_be_swapped_granularly
+          skip_unless_sqlite3_gem_available
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -290,6 +360,8 @@ module ActiveRecord
         end
 
         def test_connected_to_many
+          skip_unless_sqlite3_gem_available
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -366,6 +438,8 @@ module ActiveRecord
         end
 
         def test_prevent_writes_can_be_changed_granularly
+          skip_unless_sqlite3_gem_available
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           # replica: true is purposefully left out so we can test the pools behavior
@@ -385,44 +459,44 @@ module ActiveRecord
 
           # Switch everything to writing
           ActiveRecord::Base.connected_to(role: :writing) do
-            assert_not_predicate ActiveRecord::Base.connection, :preventing_writes?
-            assert_not_predicate PrimaryBase.connection, :preventing_writes?
-            assert_not_predicate SecondaryBase.connection, :preventing_writes?
+            assert_not_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
+            assert_not_predicate PrimaryBase.lease_connection, :preventing_writes?
+            assert_not_predicate SecondaryBase.lease_connection, :preventing_writes?
 
             # Switch only primary to reading
             PrimaryBase.connected_to(role: :reading) do
-              assert_predicate PrimaryBase.connection, :preventing_writes?
-              assert_not_predicate SecondaryBase.connection, :preventing_writes?
+              assert_predicate PrimaryBase.lease_connection, :preventing_writes?
+              assert_not_predicate SecondaryBase.lease_connection, :preventing_writes?
 
               # Switch global to reading
               ActiveRecord::Base.connected_to(role: :reading) do
-                assert_predicate PrimaryBase.connection, :preventing_writes?
-                assert_predicate SecondaryBase.connection, :preventing_writes?
+                assert_predicate PrimaryBase.lease_connection, :preventing_writes?
+                assert_predicate SecondaryBase.lease_connection, :preventing_writes?
 
                 # Switch only secondary to writing
                 SecondaryBase.connected_to(role: :writing) do
-                  assert_predicate PrimaryBase.connection, :preventing_writes?
-                  assert_not_predicate SecondaryBase.connection, :preventing_writes?
+                  assert_predicate PrimaryBase.lease_connection, :preventing_writes?
+                  assert_not_predicate SecondaryBase.lease_connection, :preventing_writes?
                 end
 
                 # Ensure restored to global reading
-                assert_predicate PrimaryBase.connection, :preventing_writes?
-                assert_predicate SecondaryBase.connection, :preventing_writes?
+                assert_predicate PrimaryBase.lease_connection, :preventing_writes?
+                assert_predicate SecondaryBase.lease_connection, :preventing_writes?
               end
 
               # Switch everything to writing
               ActiveRecord::Base.connected_to(role: :writing) do
-                assert_not_predicate PrimaryBase.connection, :preventing_writes?
-                assert_not_predicate SecondaryBase.connection, :preventing_writes?
+                assert_not_predicate PrimaryBase.lease_connection, :preventing_writes?
+                assert_not_predicate SecondaryBase.lease_connection, :preventing_writes?
               end
 
-              assert_predicate PrimaryBase.connection, :preventing_writes?
-              assert_not_predicate SecondaryBase.connection, :preventing_writes?
+              assert_predicate PrimaryBase.lease_connection, :preventing_writes?
+              assert_not_predicate SecondaryBase.lease_connection, :preventing_writes?
             end
 
             # Ensure restored to global writing
-            assert_not_predicate PrimaryBase.connection, :preventing_writes?
-            assert_not_predicate SecondaryBase.connection, :preventing_writes?
+            assert_not_predicate PrimaryBase.lease_connection, :preventing_writes?
+            assert_not_predicate SecondaryBase.lease_connection, :preventing_writes?
           end
         ensure
           ActiveRecord::Base.configurations = @prev_configs
@@ -441,14 +515,53 @@ module ActiveRecord
 
           # Switch everything to writing
           ActiveRecord::Base.connected_to(role: :writing) do
-            assert_not_predicate ApplicationRecord.connection, :preventing_writes?
+            assert_not_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
+            assert_not_predicate ApplicationRecord.lease_connection, :preventing_writes?
 
             ApplicationRecord.connected_to(role: :reading) do
-              assert_predicate ApplicationRecord.connection, :preventing_writes?
+              assert_predicate ApplicationRecord.lease_connection, :preventing_writes?
+            end
+
+            # reading is fine bc it's looking up by AppRec but writing is not fine
+            # bc its looking up by ARB in the stack
+            ApplicationRecord.connected_to(role: :writing, prevent_writes: true) do
+              assert_predicate ApplicationRecord.lease_connection, :preventing_writes?
             end
           end
         ensure
+          ApplicationRecord.remove_connection
+          ActiveRecord.application_record_class = nil
           Object.send(:remove_const, :ApplicationRecord)
+          ActiveRecord::Base.establish_connection :arunit
+        end
+
+        def test_prevent_writes_handles_class_reloading
+          skip "IBM_DB keeps preventing_writes enabled for this class-reloading override path" if current_adapter?(:IBM_DBAdapter)
+
+          # Regression test for https://github.com/rails/rails/issues/54343
+          Object.const_set(:ReloadedRecord, Class.new(ActiveRecord::Base) { self.abstract_class = true })
+          ReloadedRecord.connects_to(database: { writing: :arunit, reading: :arunit })
+
+          ActiveRecord::Base.connected_to(role: :reading, prevent_writes: true) do
+            ReloadedRecord.connected_to(role: :writing, prevent_writes: false) do
+              assert_not_predicate ReloadedRecord.lease_connection, :preventing_writes?
+            end
+          end
+
+          # emulate a reload in development mode
+          Object.send(:remove_const, :ReloadedRecord)
+          Object.const_set(:ReloadedRecord, Class.new(ActiveRecord::Base) { self.abstract_class = true })
+          ReloadedRecord.connects_to(database: { writing: :arunit, reading: :arunit })
+
+          ActiveRecord::Base.connected_to(role: :reading, prevent_writes: true) do
+            ReloadedRecord.connected_to(role: :writing, prevent_writes: false) do
+              assert_not_predicate ReloadedRecord.lease_connection, :preventing_writes?
+            end
+          end
+        ensure
+          ReloadedRecord.remove_connection if Object.const_defined?(:ReloadedRecord)
+          ActiveRecord.application_record_class = nil
+          Object.send(:remove_const, :ReloadedRecord) if Object.const_defined?(:ReloadedRecord)
           ActiveRecord::Base.establish_connection :arunit
         end
       end

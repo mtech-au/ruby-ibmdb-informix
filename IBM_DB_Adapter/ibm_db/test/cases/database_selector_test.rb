@@ -62,15 +62,15 @@ module ActiveRecord
           called = true
 
           assert ActiveRecord::Base.connected_to?(role: :reading)
-          assert_predicate ActiveRecord::Base.connection, :preventing_writes?
+          assert_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
 
           ActiveRecord::Base.connected_to(role: :writing, prevent_writes: false) do
             assert ActiveRecord::Base.connected_to?(role: :writing)
-            assert_not_predicate ActiveRecord::Base.connection, :preventing_writes?
+            assert_not_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
           end
 
           assert ActiveRecord::Base.connected_to?(role: :reading)
-          assert_predicate ActiveRecord::Base.connection, :preventing_writes?
+          assert_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
         end
         assert called
       end
@@ -202,12 +202,12 @@ module ActiveRecord
       write = false
       resolver.read do
         assert ActiveRecord::Base.connected_to?(role: :writing)
-        assert_predicate ActiveRecord::Base.connection, :preventing_writes?
+        assert_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
         read = true
 
         resolver.write do
           assert ActiveRecord::Base.connected_to?(role: :writing)
-          assert_not_predicate ActiveRecord::Base.connection, :preventing_writes?
+          assert_not_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
           write = true
         end
       end
@@ -227,7 +227,7 @@ module ActiveRecord
         resolver.read do
           inside_preventing.wait
           assert ActiveRecord::Base.connected_to?(role: :writing)
-          assert_predicate ActiveRecord::Base.connection, :preventing_writes?
+          assert_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
           finished_checking.set
         end
       end
@@ -235,7 +235,7 @@ module ActiveRecord
       t2 = Thread.new do
         resolver.write do
           assert ActiveRecord::Base.connected_to?(role: :writing)
-          assert_not_predicate ActiveRecord::Base.connection, :preventing_writes?
+          assert_not_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
           inside_preventing.set
           finished_checking.wait
         end
@@ -244,7 +244,7 @@ module ActiveRecord
       t3 = Thread.new do
         resolver.read do
           assert ActiveRecord::Base.connected_to?(role: :writing)
-          assert_predicate ActiveRecord::Base.connection, :preventing_writes?
+          assert_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
         end
       end
 
@@ -282,6 +282,8 @@ module ActiveRecord
         assert ActiveRecord::Base.connected_to?(role: :writing)
         [200, {}, ["body"]]
       })
+      cache = ActiveSupport::Cache::MemoryStore.new
+      middleware = ActionDispatch::Session::CacheStore.new(middleware, cache: cache, key: "_session_id")
       assert_equal [200, {}, ["body"]], middleware.call("REQUEST_METHOD" => "POST")
     end
 
@@ -290,7 +292,27 @@ module ActiveRecord
         assert ActiveRecord::Base.connected_to?(role: :reading)
         [200, {}, ["body"]]
       })
+      cache = ActiveSupport::Cache::MemoryStore.new
+      middleware = ActionDispatch::Session::CacheStore.new(middleware, cache: cache, key: "_session_id")
+
       assert_equal [200, {}, ["body"]], middleware.call("REQUEST_METHOD" => "GET")
+    end
+
+    class ReadonlyResolver < ActiveRecord::Middleware::DatabaseSelector::Resolver
+      def reading_request?(request)
+        true
+      end
+    end
+
+    def test_the_middleware_chooses_reading_role_with_POST_request_if_resolver_tells_it_to
+      middleware = ActiveRecord::Middleware::DatabaseSelector.new(lambda { |env|
+        assert ActiveRecord::Base.connected_to?(role: :reading)
+        [200, {}, ["body"]]
+      }, ReadonlyResolver)
+
+      cache = ActiveSupport::Cache::MemoryStore.new
+      middleware = ActionDispatch::Session::CacheStore.new(middleware, cache: cache, key: "_session_id")
+      assert_equal [200, {}, ["body"]], middleware.call("REQUEST_METHOD" => "POST")
     end
   end
 end

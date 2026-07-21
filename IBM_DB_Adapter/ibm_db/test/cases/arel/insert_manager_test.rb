@@ -4,12 +4,6 @@ require_relative "helper"
 
 module Arel
   class InsertManagerTest < Arel::Spec
-    describe "new" do
-      it "takes an engine" do
-        Arel::InsertManager.new
-      end
-    end
-
     describe "insert" do
       it "can create a ValuesList node" do
         manager = Arel::InsertManager.new
@@ -110,7 +104,7 @@ module Arel
 
         manager.insert [[attribute, time]]
         _(manager.to_sql).must_be_like %{
-          INSERT INTO "users" ("created_at") VALUES (#{Table.engine.connection.quote time})
+          INSERT INTO "users" ("created_at") VALUES (#{Table.engine.lease_connection.quote time})
         }
       end
 

@@ -42,15 +42,24 @@ class RelationScopingTest < ActiveRecord::TestCase
     assert_equal Developer.order("id DESC").to_a.reverse, Developer.order("id DESC").reverse_order
   end
 
-  def test_reverse_order_with_arel_node
+  def test_reverse_order_with_arel_attribute
     assert_equal Developer.order("id DESC").to_a.reverse, Developer.order(Developer.arel_table[:id].desc).reverse_order
   end
 
-  def test_reverse_order_with_multiple_arel_nodes
+  def test_reverse_order_with_arel_attribute_as_hash
+    assert_equal Developer.order("id DESC").to_a.reverse, Developer.order(Developer.arel_table[:id] => :desc).reverse_order
+  end
+
+  def test_reverse_order_with_arel_node_as_hash
+    node = Developer.arel_table[:id] + 0 # converts to Arel::Nodes::Grouping
+    assert_equal Developer.order("id DESC").to_a.reverse, Developer.order(node => :desc).reverse_order
+  end
+
+  def test_reverse_order_with_multiple_arel_attributes
     assert_equal Developer.order("id DESC").order("name DESC").to_a.reverse, Developer.order(Developer.arel_table[:id].desc).order(Developer.arel_table[:name].desc).reverse_order
   end
 
-  def test_reverse_order_with_arel_nodes_and_strings
+  def test_reverse_order_with_arel_attributes_and_strings
     assert_equal Developer.order("id DESC").order("name DESC").to_a.reverse, Developer.order("id DESC").order(Developer.arel_table[:name].desc).reverse_order
   end
 
@@ -147,7 +156,7 @@ class RelationScopingTest < ActiveRecord::TestCase
   def test_scoped_find_with_annotation
     Developer.annotate("scoped").scoping do
       developer = nil
-      assert_sql(%r{/\* scoped \*/}) do
+      assert_queries_match(%r{/\* scoped \*/}) do
         developer = Developer.where("name = 'David'").first
       end
       assert_equal "David", developer.name
@@ -349,6 +358,90 @@ class RelationScopingTest < ActiveRecord::TestCase
     end
     assert_equal posts, Post.left_joins(comments: :post).first(10)
   end
+
+  def test_scoping_applies_to_update_with_all_queries
+    Author.all.limit(5).update_all(organization_id: 1)
+
+    dev = Author.where(organization_id: 1).first
+
+    Author.where(organization_id: 1).scoping do
+      update_sql = capture_sql { dev.update(name: "Eileen") }.first
+      assert_no_match(/organization_id/, update_sql)
+    end
+
+    Author.where(organization_id: 1).scoping(all_queries: true) do
+      update_scoped_sql = capture_sql { dev.update(name: "Not Eileen") }.second
+      assert_match(/organization_id/, update_scoped_sql)
+    end
+  end
+
+  def test_scoping_applies_to_delete_with_all_queries
+    Author.all.limit(5).update_all(organization_id: 1)
+
+    dev1 = Author.where(organization_id: 1).first
+    dev2 = Author.where(organization_id: 1).last
+
+    Author.where(organization_id: 1).scoping do
+      delete_sql = capture_sql { dev1.delete }.first
+      assert_no_match(/organization_id/, delete_sql)
+    end
+
+    Author.where(organization_id: 1).scoping(all_queries: true) do
+      delete_scoped_sql = capture_sql { dev2.delete }.first
+      assert_match(/organization_id/, delete_scoped_sql)
+    end
+  end
+
+  def test_scoping_applies_to_reload_with_all_queries
+    Author.all.limit(5).update_all(organization_id: 1)
+
+    dev1 = Author.where(organization_id: 1).first
+
+    Author.where(organization_id: 1).scoping do
+      reload_sql = capture_sql { dev1.reload }.first
+      assert_no_match(/organization_id/, reload_sql)
+    end
+
+    Author.where(organization_id: 1).scoping(all_queries: true) do
+      scoped_reload_sql = capture_sql { dev1.reload }.first
+      assert_match(/organization_id/, scoped_reload_sql)
+    end
+  end
+
+  def test_nested_scoping_applies_with_all_queries_set
+    Author.all.limit(5).update_all(organization_id: 1)
+
+    Author.where(organization_id: 1).scoping(all_queries: true) do
+      select_sql = capture_sql { Author.first }.first
+      assert_match(/organization_id/, select_sql)
+
+      Author.where(owned_essay_id: nil).scoping do
+        second_select_sql = capture_sql { Author.first }.first
+        assert_match(/organization_id/, second_select_sql)
+        assert_match(/owned_essay_id/, second_select_sql)
+      end
+
+      third_select_sql = capture_sql { Author.first }.first
+      assert_match(/organization_id/, third_select_sql)
+      assert_no_match(/owned_essay_id/, third_select_sql)
+    end
+  end
+
+  def test_raises_error_if_all_queries_is_set_to_false_while_nested
+    Author.all.limit(5).update_all(organization_id: 1)
+
+    Author.where(organization_id: 1).scoping(all_queries: true) do
+      select_sql = capture_sql { Author.first }.first
+      assert_match(/organization_id/, select_sql)
+
+      error = assert_raises ArgumentError do
+        Author.where(organization_id: 1).scoping(all_queries: false) { }
+      end
+
+      assert_equal "Scoping is set to apply to all queries and cannot be " \
+       "unset in a nested block.", error.message
+    end
+  end
 end
 
 class NestedRelationScopingTest < ActiveRecord::TestCase
@@ -481,6 +574,21 @@ class HasManyScopingTest < ActiveRecord::TestCase
     michael = Person.where(id: people(:michael).id).includes(:bad_references).first
     magician = BadReference.find(1)
     assert_equal [magician], michael.bad_references
+  end
+
+  def test_scoping_applies_to_all_queries_on_has_many_when_set
+    @welcome.comments.update_all(author_id: 1)
+
+    comments_sql = capture_sql { @welcome.comments.to_a }.last
+    assert_no_match(/author_id/, comments_sql)
+
+    Comment.where(author_id: 1).scoping(all_queries: true) do
+      scoped_comments_sql = capture_sql { @welcome.comments.reload.to_a }.last
+      assert_match(/author_id/, scoped_comments_sql)
+    end
+
+    unscoped_comments_sql = capture_sql { @welcome.comments.reload.to_a }.last
+    assert_no_match(/author_id/, unscoped_comments_sql)
   end
 end
 

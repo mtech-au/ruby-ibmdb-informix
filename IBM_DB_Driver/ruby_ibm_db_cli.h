@@ -12,6 +12,14 @@
 #define RUBY_IBM_DB_CLI_H
 
 #ifdef _WIN32
+#ifndef _MSC_VER
+#define __out_ecount_opt(x)
+#define __in_ecount_opt(x)
+#define __out_bcount_opt(x)
+#endif
+#endif
+
+#ifdef _WIN32
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -21,7 +29,11 @@
 #define DLOPEN LoadLibrary
 #define DLSYM GetProcAddress
 #define DLCLOSE FreeLibrary
+#if defined(_WIN64) || defined(__x86_64__) || defined(__amd64__)
+#define LIBDB2 "db2cli64.dll"
+#else
 #define LIBDB2 "db2cli.dll"
+#endif
 #elif _AIX
 #define DLOPEN dlopen
 #define DLSYM dlsym

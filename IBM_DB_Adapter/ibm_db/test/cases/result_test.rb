@@ -12,28 +12,6 @@ module ActiveRecord
       ])
     end
 
-    test "map! is deprecated" do
-      assert_deprecated do
-        result.map! { nil }
-      end
-      assert_equal [
-        { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" },
-        { "col_1" => "row 2 col 1", "col_2" => "row 2 col 2" },
-        { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" },
-      ], result.to_a
-    end
-
-    test "collect! is deprecated" do
-      assert_deprecated do
-        result.collect! { nil }
-      end
-      assert_equal [
-        { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" },
-        { "col_1" => "row 2 col 1", "col_2" => "row 2 col 2" },
-        { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" },
-      ], result.to_a
-    end
-
     test "includes_column?" do
       assert result.includes_column?("col_1")
       assert_not result.includes_column?("foo")
@@ -136,6 +114,20 @@ module ActiveRecord
       result = Result.new(columns, values, types)
 
       assert_equal [[1.1, 2.2], [3.3, 4.4]], result.cast_values("col1" => Type::Float.new)
+    end
+
+    test "each when two columns have the same name" do
+      result = Result.new(["foo", "foo"], [
+        ["col 1", "col 2"],
+        ["col 1", "col 2"],
+        ["col 1", "col 2"],
+      ])
+
+      assert_equal 2, result.columns.size
+      result.each do |row|
+        assert_equal 1, row.size
+        assert_equal "col 2", row["foo"]
+      end
     end
   end
 end

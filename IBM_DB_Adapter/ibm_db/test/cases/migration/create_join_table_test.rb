@@ -9,7 +9,7 @@ module ActiveRecord
 
       def setup
         super
-        @connection = ActiveRecord::Base.connection
+        @connection = ActiveRecord::Base.lease_connection
       end
 
       teardown do
@@ -124,6 +124,13 @@ module ActiveRecord
         connection.drop_join_table :artists, :musics, table_name: "catalog"
 
         assert_not connection.table_exists?("catalog")
+      end
+
+      def test_drop_join_table_with_drop_table_options
+        assert_not connection.table_exists?("artists_musics")
+        assert_nothing_raised do
+          connection.drop_join_table :artists, :musics, if_exists: true
+        end
       end
 
       def test_drop_join_table_with_column_options

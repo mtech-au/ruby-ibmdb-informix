@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "ostruct"
+require "models/computer"
 
 class Developer < ActiveRecord::Base
   module TimestampAliases
@@ -30,6 +30,10 @@ class Developer < ActiveRecord::Base
     end
   end
 
+  def self.target
+    :__target__ # Used by delegation_test.rb
+  end
+
   belongs_to :mentor
   belongs_to :strict_loading_mentor, strict_loading: true, foreign_key: :mentor_id, class_name: "Mentor"
   belongs_to :strict_loading_off_mentor, strict_loading: false, foreign_key: :mentor_id, class_name: "Mentor"
@@ -37,6 +41,7 @@ class Developer < ActiveRecord::Base
   accepts_nested_attributes_for :projects
 
   has_and_belongs_to_many :shared_computers, class_name: "Computer"
+  has_many :computers, foreign_key: :developer
 
   has_and_belongs_to_many :projects_extended_by_name,
       -> { extending(ProjectsAssociationExtension) },
@@ -130,6 +135,8 @@ end
 class AuditLog < ActiveRecord::Base
   belongs_to :developer, validate: true
   belongs_to :unvalidated_developer, class_name: "Developer"
+
+  self.attributes_for_inspect = [:id, :message]
 end
 
 class AuditLogRequired < ActiveRecord::Base
@@ -150,6 +157,35 @@ end
 class DeveloperWithSelect < ActiveRecord::Base
   self.table_name = "developers"
   default_scope { select("name") }
+end
+
+class DeveloperwithDefaultMentorScopeNot < ActiveRecord::Base
+  self.table_name = "developers"
+  default_scope -> { where(mentor_id: 1) }
+end
+
+class DeveloperWithDefaultMentorScopeAllQueries < ActiveRecord::Base
+  self.table_name = "developers"
+  default_scope -> { where(mentor_id: 1) }, all_queries: true
+end
+
+class DeveloperWithDefaultNilableFirmScopeAllQueries < ActiveRecord::Base
+  self.table_name = "developers"
+  firm_id = nil # Could be something like Current.firm_id
+  default_scope -> { where(firm_id: firm_id) if firm_id }, all_queries: true
+end
+
+module MentorDefaultScopeNotAllQueries
+  extend ActiveSupport::Concern
+
+  included { default_scope { where(mentor_id: 1) } }
+end
+
+class DeveloperWithIncludedMentorDefaultScopeNotAllQueriesAndDefaultScopeFirmWithAllQueries < ActiveRecord::Base
+  include MentorDefaultScopeNotAllQueries
+  self.table_name = "developers"
+  firm_id = 10 # Could be something like Current.firm_id
+  default_scope -> { where(firm_id: firm_id) if firm_id }, all_queries: true
 end
 
 class DeveloperWithIncludes < ActiveRecord::Base
@@ -193,7 +229,7 @@ end
 
 class CallableDeveloperCalledDavid < ActiveRecord::Base
   self.table_name = "developers"
-  default_scope OpenStruct.new(call: where(name: "David"))
+  default_scope Struct.new(:call).new(where(name: "David"))
 end
 
 class ClassMethodDeveloperCalledDavid < ActiveRecord::Base
@@ -296,7 +332,7 @@ class EagerDeveloperWithCallableDefaultScope < ActiveRecord::Base
   self.table_name = "developers"
   has_and_belongs_to_many :projects, -> { order("projects.id") }, foreign_key: "developer_id", join_table: "developers_projects"
 
-  default_scope OpenStruct.new(call: includes(:projects))
+  default_scope Struct.new(:call).new(includes(:projects))
 end
 
 class ThreadsafeDeveloper < ActiveRecord::Base
@@ -338,4 +374,9 @@ end
 class ColumnNamesCachedDeveloper < ActiveRecord::Base
   self.table_name = "developers"
   self.ignored_columns += ["name"] if column_names.include?("name")
+end
+
+class AuditRequiredDeveloper < ActiveRecord::Base
+  self.table_name = "developers"
+  has_many :required_audit_logs, class_name: "AuditLogRequired"
 end

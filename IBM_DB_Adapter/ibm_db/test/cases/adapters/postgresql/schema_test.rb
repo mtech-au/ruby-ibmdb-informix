@@ -17,6 +17,7 @@ end
 
 class SchemaTest < ActiveRecord::PostgreSQLTestCase
   include PGSchemaHelper
+  include SchemaDumpingHelper
   self.use_transactional_tests = false
 
   SCHEMA_NAME = "test_schema"
@@ -80,7 +81,7 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
   end
 
   def setup
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.execute "CREATE SCHEMA #{SCHEMA_NAME} CREATE TABLE #{TABLE_NAME} (#{COLUMNS.join(',')})"
     @connection.execute "CREATE TABLE #{SCHEMA_NAME}.\"#{TABLE_NAME}.table\" (#{COLUMNS.join(',')})"
     @connection.execute "CREATE TABLE #{SCHEMA_NAME}.\"#{CAPITALIZED_TABLE_NAME}\" (#{COLUMNS.join(',')})"
@@ -130,6 +131,32 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
     @connection.drop_schema "test_schema3"
   end
 
+  def test_force_create_schema
+    @connection.create_schema "test_schema3"
+    assert_queries_match(/DROP SCHEMA IF EXISTS "test_schema3"/) do
+      @connection.create_schema "test_schema3", force: true
+    end
+    assert @connection.schema_names.include?("test_schema3")
+  ensure
+    @connection.drop_schema "test_schema3"
+  end
+
+  def test_create_schema_if_not_exists
+    @connection.create_schema "test_schema3"
+    assert_queries_match('CREATE SCHEMA IF NOT EXISTS "test_schema3"') do
+      @connection.create_schema "test_schema3", if_not_exists: true
+    end
+    assert @connection.schema_names.include?("test_schema3")
+  ensure
+    @connection.drop_schema "test_schema3"
+  end
+
+  def test_create_schema_raises_if_both_force_and_if_not_exists_provided
+    assert_raises(ArgumentError, match: "Options `:force` and `:if_not_exists` cannot be used simultaneously.") do
+      @connection.create_schema "test_schema3", force: true, if_not_exists: true
+    end
+  end
+
   def test_drop_schema
     begin
       @connection.create_schema "test_schema3"
@@ -147,9 +174,9 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
   end
 
   def test_habtm_table_name_with_schema
-    ActiveRecord::Base.connection.drop_schema "music", if_exists: true
-    ActiveRecord::Base.connection.create_schema "music"
-    ActiveRecord::Base.connection.execute <<~SQL
+    ActiveRecord::Base.lease_connection.drop_schema "music", if_exists: true
+    ActiveRecord::Base.lease_connection.create_schema "music"
+    ActiveRecord::Base.lease_connection.execute <<~SQL
       CREATE TABLE music.albums (id serial primary key, deleted boolean default false);
       CREATE TABLE music.songs (id serial primary key);
       CREATE TABLE music.albums_songs (album_id integer, song_id integer);
@@ -158,8 +185,10 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
     song = Song.create
     album = song.albums.create
     assert_equal song, Song.includes(:albums).where("albums.id": album.id).first
+    assert_equal [album.id], Song.joins(:albums).pluck("albums.id")
+    assert_equal [album.id], Song.joins(:albums).pluck("music.albums.id")
   ensure
-    ActiveRecord::Base.connection.drop_schema "music", if_exists: true
+    ActiveRecord::Base.lease_connection.drop_schema "music", if_exists: true
   end
 
   def test_drop_schema_with_nonexisting_schema
@@ -178,13 +207,16 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
     end
   end
 
-  if ActiveRecord::Base.connection.prepared_statements
+  if ActiveRecord::Base.lease_connection.prepared_statements
     def test_schema_change_with_prepared_stmt
       altered = false
-      @connection.exec_query "select * from developers where id = $1", "sql", [bind_param(1)]
-      @connection.exec_query "alter table developers add column zomg int", "sql", []
-      altered = true
-      @connection.exec_query "select * from developers where id = $1", "sql", [bind_param(1)]
+      assert_nothing_raised do
+        @connection.exec_query "select * from developers where id = $1", "sql", [bind_param(1)]
+        @connection.exec_query "alter table developers add column zomg int", "sql", []
+        altered = true
+        @connection.exec_query "select * from developers where id = $1", "sql", [bind_param(1)]
+      end
+      pass
     ensure
       # We are not using DROP COLUMN IF EXISTS because that syntax is only
       # supported by pg 9.X
@@ -260,6 +292,16 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
     assert_equal '"schema.name"."table.name"', @connection.quote_table_name('"schema.name"."table.name"')
   end
 
+  def test_where_with_qualified_schema_name
+    Thing1.create(id: 1, name: "thing1", email: "thing1@localhost", moment: Time.now)
+    assert_equal ["thing1"], Thing1.where("test_schema.things.name": "thing1").map(&:name)
+  end
+
+  def test_pluck_with_qualified_schema_name
+    Thing1.create(id: 1, name: "thing1", email: "thing1@localhost", moment: Time.now)
+    assert_equal ["thing1"], Thing1.pluck(:"test_schema.things.name")
+  end
+
   def test_classes_with_qualified_schema_name
     assert_equal 0, Thing1.count
     assert_equal 0, Thing2.count
@@ -321,6 +363,8 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
         assert @connection.index_name_exists?(PARTITIONED_TABLE, PARTITIONED_TABLE_INDEX)
       end
     end
+
+    assert @connection.index_name_exists?("#{SCHEMA_NAME}.#{TABLE_NAME}", INDEX_A_NAME)
   end
 
   def test_dump_indexes_for_schema_one
@@ -475,6 +519,22 @@ class SchemaTest < ActiveRecord::PostgreSQLTestCase
     @connection.reset_pk_sequence! table_name
   end
 
+  def test_rename_index
+    old_name = INDEX_A_NAME
+    new_name = "#{old_name}_new"
+    @connection.rename_index("#{SCHEMA_NAME}.#{TABLE_NAME}", old_name, new_name)
+    assert_not @connection.index_name_exists?("#{SCHEMA_NAME}.#{TABLE_NAME}", old_name)
+    assert @connection.index_name_exists?("#{SCHEMA_NAME}.#{TABLE_NAME}", new_name)
+  end
+
+  def test_dumping_schemas
+    output = dump_all_table_schema(/./)
+
+    assert_no_match %r{create_schema "public"}, output
+    assert_match %r{create_schema "test_schema"}, output
+    assert_match %r{create_schema "test_schema2"}, output
+  end
+
   private
     def columns(table_name)
       @connection.send(:column_definitions, table_name).map do |name, type, default|
@@ -528,24 +588,48 @@ class SchemaForeignKeyTest < ActiveRecord::PostgreSQLTestCase
   include SchemaDumpingHelper
 
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
+    @connection.create_schema("my_schema")
+  end
+
+  teardown do
+    @connection.drop_schema("my_schema", if_exists: true)
   end
 
   def test_dump_foreign_key_targeting_different_schema
-    @connection.create_schema "my_schema"
     @connection.create_table "my_schema.trains" do |t|
       t.string :name
     end
     @connection.create_table "wagons" do |t|
       t.integer :train_id
     end
-    @connection.add_foreign_key "wagons", "my_schema.trains", column: "train_id"
+    @connection.add_foreign_key "wagons", "my_schema.trains"
     output = dump_table_schema "wagons"
-    assert_match %r{\s+add_foreign_key "wagons", "my_schema\.trains", column: "train_id"$}, output
+    assert_match %r{\s+add_foreign_key "wagons", "my_schema\.trains"$}, output
   ensure
     @connection.drop_table "wagons", if_exists: true
     @connection.drop_table "my_schema.trains", if_exists: true
-    @connection.drop_schema "my_schema", if_exists: true
+  end
+
+  def test_create_foreign_key_same_schema
+    @connection.create_table "my_schema.trains"
+    @connection.create_table "my_schema.wagons" do |t|
+      t.integer :train_id
+    end
+    @connection.add_foreign_key "my_schema.wagons", "my_schema.trains"
+    assert @connection.foreign_key_exists?("my_schema.wagons", "my_schema.trains")
+  end
+
+  def test_create_foreign_key_different_schemas
+    @connection.create_schema "my_other_schema"
+    @connection.create_table "my_schema.trains"
+    @connection.create_table "my_other_schema.wagons" do |t|
+      t.integer :train_id
+    end
+    @connection.add_foreign_key "my_other_schema.wagons", "my_schema.trains"
+    assert @connection.foreign_key_exists?("my_other_schema.wagons", "my_schema.trains")
+  ensure
+    @connection.drop_schema "my_other_schema", if_exists: true
   end
 end
 
@@ -553,7 +637,7 @@ class SchemaIndexOpclassTest < ActiveRecord::PostgreSQLTestCase
   include SchemaDumpingHelper
 
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.create_table "trains" do |t|
       t.string :name
       t.string :position
@@ -597,7 +681,7 @@ class SchemaIndexNullsOrderTest < ActiveRecord::PostgreSQLTestCase
   include SchemaDumpingHelper
 
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.create_table "trains" do |t|
       t.string :name
       t.text :description
@@ -623,7 +707,7 @@ end
 
 class DefaultsUsingMultipleSchemasAndDomainTest < ActiveRecord::PostgreSQLTestCase
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.drop_schema "schema_1", if_exists: true
     @connection.execute "CREATE SCHEMA schema_1"
     @connection.execute "CREATE DOMAIN schema_1.text AS text"
@@ -677,10 +761,9 @@ end
 
 class SchemaWithDotsTest < ActiveRecord::PostgreSQLTestCase
   include PGSchemaHelper
-  self.use_transactional_tests = false
 
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.create_schema "my.schema"
   end
 
@@ -709,5 +792,172 @@ class SchemaWithDotsTest < ActiveRecord::PostgreSQLTestCase
       welcome_article = article_class.last
       assert_equal "zOMG, welcome to my blorgh!", welcome_article.title
     end
+  end
+end
+
+class SchemaJoinTablesTest < ActiveRecord::PostgreSQLTestCase
+  def setup
+    @connection = ActiveRecord::Base.lease_connection
+    @connection.create_schema("test_schema")
+  end
+
+  def teardown
+    @connection.drop_schema("test_schema", if_exists: true)
+  end
+
+  def test_create_join_table
+    @connection.create_join_table("test_schema.posts", "test_schema.comments")
+    assert @connection.table_exists?("test_schema.comments_posts")
+    columns = @connection.columns("test_schema.comments_posts").map(&:name)
+    assert_equal ["comment_id", "post_id"], columns.sort
+
+    @connection.drop_join_table("test_schema.posts", "test_schema.comments")
+    assert_not @connection.table_exists?("test_schema.comments_posts")
+  end
+end
+
+class SchemaIndexIncludeColumnsTest < ActiveRecord::PostgreSQLTestCase
+  include SchemaDumpingHelper
+
+  def test_schema_dumps_index_included_columns
+    index_definition = dump_table_schema("companies").split(/\n/).grep(/t\.index.*company_include_index/).first.strip
+    if ActiveRecord::Base.lease_connection.supports_index_include?
+      assert_equal 't.index ["firm_id", "type"], name: "company_include_index", include: ["name", "account_id"]', index_definition
+    else
+      assert_equal 't.index ["firm_id", "type"], name: "company_include_index"', index_definition
+    end
+  end
+end
+
+class SchemaIndexNullsNotDistinctTest < ActiveRecord::PostgreSQLTestCase
+  include SchemaDumpingHelper
+
+  setup do
+    @connection = ActiveRecord::Base.lease_connection
+    @connection.create_table "trains" do |t|
+      t.string :name
+    end
+  end
+
+  teardown do
+    @connection.drop_table "trains", if_exists: true
+  end
+
+  def test_nulls_not_distinct_is_dumped
+    skip("current adapter doesn't support nulls not distinct") unless supports_nulls_not_distinct?
+
+    @connection.execute "CREATE INDEX trains_name ON trains USING btree(name) NULLS NOT DISTINCT"
+
+    output = dump_table_schema "trains"
+
+    assert_match(/nulls_not_distinct: true/, output)
+  end
+
+  def test_nulls_distinct_is_dumped
+    skip("current adapter doesn't support nulls not distinct") unless supports_nulls_not_distinct?
+
+    @connection.execute "CREATE INDEX trains_name ON trains USING btree(name) NULLS DISTINCT"
+
+    output = dump_table_schema "trains"
+
+    assert_no_match(/nulls_not_distinct/, output)
+  end
+
+  def test_nulls_not_set_is_dumped
+    @connection.execute "CREATE INDEX trains_name ON trains USING btree(name)"
+
+    output = dump_table_schema "trains"
+
+    assert_no_match(/nulls_not_distinct/, output)
+  end
+end
+
+class SchemaCreateTableOptionsTest < ActiveRecord::PostgreSQLTestCase
+  include SchemaDumpingHelper
+
+  setup do
+    @previous_unlogged_tables = ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.create_unlogged_tables
+    @connection = ActiveRecord::Base.connection
+    ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.create_unlogged_tables = false
+  end
+
+  teardown do
+    @connection.drop_table "trains", if_exists: true
+    @connection.drop_table "transportation_modes", if_exists: true
+    @connection.drop_table "vehicles", if_exists: true
+    ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.create_unlogged_tables = @previous_unlogged_tables
+  end
+
+  def test_list_partition_options_is_dumped
+    skip("current adapter doesn't support native partitioning") unless supports_native_partitioning?
+
+    options = "PARTITION BY LIST (kind)"
+
+    @connection.create_table "trains", id: false, options: options do |t|
+      t.string :name
+      t.string :kind
+    end
+
+    output = dump_table_schema "trains"
+
+    assert_match("options: \"#{options}\"", output)
+  end
+
+  def test_range_partition_options_is_dumped
+    skip("current adapter doesn't support native partitioning") unless supports_native_partitioning?
+
+    options = "PARTITION BY RANGE (created_at)"
+
+    @connection.create_table "trains", id: false, options: options do |t|
+      t.string :name
+      t.datetime :created_at, null: false
+    end
+
+    output = dump_table_schema "trains"
+
+    assert_match("options: \"#{options}\"", output)
+  end
+
+  def test_inherited_table_options_is_dumped
+    @connection.create_table "transportation_modes" do |t|
+      t.string :name
+      t.string :kind
+    end
+
+    options = "INHERITS (transportation_modes)"
+
+    @connection.create_table "trains", options: options
+
+    output = dump_table_schema "trains"
+
+    assert_match("options: \"#{options}\"", output)
+  end
+
+  def test_multiple_inherited_table_options_is_dumped
+    @connection.create_table "vehicles" do |t|
+      t.string :name
+    end
+
+    @connection.create_table "transportation_modes" do |t|
+      t.string :kind
+    end
+
+    options = "INHERITS (transportation_modes, vehicles)"
+
+    @connection.create_table "trains", options: options
+
+    output = dump_table_schema "trains"
+
+    assert_match("options: \"#{options}\"", output)
+  end
+
+  def test_no_partition_options_are_dumped
+    @connection.create_table "trains" do |t|
+      t.string :name
+    end
+
+    output = dump_table_schema "trains"
+
+    assert_no_match("options:", output)
   end
 end

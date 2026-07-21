@@ -9,7 +9,7 @@ class PostgresqlInfinityTest < ActiveRecord::PostgreSQLTestCase
   end
 
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.create_table(:postgresql_infinities) do |t|
       t.float :float
       t.datetime :datetime
@@ -33,7 +33,7 @@ class PostgresqlInfinityTest < ActiveRecord::PostgreSQLTestCase
     record = PostgresqlInfinity.new(float: "-Infinity")
     assert_equal(-Float::INFINITY, record.float)
     record = PostgresqlInfinity.new(float: "NaN")
-    assert record.float.nan?, "Expected #{record.float} to be NaN"
+    assert_predicate record.float, :nan?, "Expected #{record.float} to be NaN"
   end
 
   test "update_all with infinity on a float column" do
@@ -72,7 +72,18 @@ class PostgresqlInfinityTest < ActiveRecord::PostgreSQLTestCase
 
   test "assigning 'infinity' on a datetime column with TZ aware attributes" do
     in_time_zone "Pacific Time (US & Canada)" do
+      # reset_column_information should be called to recreate types with TimeZoneConverter
+      PostgresqlInfinity.reset_column_information
+
       record = PostgresqlInfinity.create!(datetime: "infinity")
+      assert_equal Float::INFINITY, record.datetime
+      assert_equal record.datetime, record.reload.datetime
+
+      record = PostgresqlInfinity.create!(datetime: Float::INFINITY)
+      assert_equal Float::INFINITY, record.datetime
+      assert_equal record.datetime, record.reload.datetime
+
+      record = PostgresqlInfinity.create!(datetime: BigDecimal::INFINITY)
       assert_equal Float::INFINITY, record.datetime
       assert_equal record.datetime, record.reload.datetime
     end

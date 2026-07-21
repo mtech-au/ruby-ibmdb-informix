@@ -17,8 +17,8 @@ if(RUBY_PLATFORM =~ /darwin/i)
 
         require 'ibm_db.bundle'
 
-elsif(RUBY_PLATFORM =~ /mswin32/ || RUBY_PLATFORM =~ /mingw32/ )
-        require 'mswin32/ibm_db'
+elsif(RUBY_PLATFORM =~ /mswin|mingw/i )
+        require 'mswin/ibm_db'
 else
         require 'ibm_db.so'
 end

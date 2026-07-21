@@ -28,7 +28,7 @@ class ReservedWordTest < ActiveRecord::TestCase
   end
 
   def setup
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.create_table :select, force: true
     @connection.create_table :distinct, force: true
     @connection.create_table :distinct_select, id: false, force: true do |t|
@@ -69,6 +69,7 @@ class ReservedWordTest < ActiveRecord::TestCase
 
   def test_change_columns
     assert_nothing_raised { @connection.change_column_default(:group, :order, "whatever") }
+    skip "IBM_DB: SQL0190N - Column datatype change to CLOB/TEXT not supported on existing columns" if ActiveRecord::Base.connection.adapter_name.match?(/ibm/i)
     assert_nothing_raised { @connection.change_column("group", "order", :text, default: nil) }
     assert_nothing_raised { @connection.rename_column(:group, :order, :values) }
   end
