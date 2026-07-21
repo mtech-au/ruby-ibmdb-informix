@@ -49,7 +49,13 @@ if(needToDownloadedCLIPackage == true)
 
 	machine_bits = ['ibm'].pack('p').size * 8
 
-	is64Bit = (machine_bits == 64)	
+	is64Bit = true
+
+	if machine_bits == 64
+	  is64Bit = true	  
+	else
+	  is64Bit = false	  
+	end
 
 	if (RUBY_PLATFORM =~ /mswin/ || RUBY_PLATFORM =~ /mingw/)
 	  if(is64Bit)			
@@ -79,15 +85,9 @@ end
 #Check if we are on 64-bit or 32-bit ruby and load binary accordingly
 machine_bits = ['ibm'].pack('p').size * 8
 if machine_bits == 64		
-	if (RUBY_VERSION =~ /4.0/)
-		require 'rb4x/x64/ruby40/ibm_db.so'
-	else
-		raise LoadError, "ibm_db does not have a Windows 64-bit binary for Ruby #{RUBY_VERSION}. Expected a supported build under lib/mswin32 for this Ruby version."
-	end
+	raise NotImplementedError, "ibm_db with Ruby 64-bit on Windows platform is not supported. Refer to README for more details"
 else
-	if (RUBY_VERSION =~ /4.0/)
-		require 'rb4x/i386/ruby40/ibm_db.so'
-	elsif (RUBY_VERSION =~ /3.0/)
+	if (RUBY_VERSION =~ /3.0/)
 		require 'rb3x/i386/ruby30/ibm_db.so'
 	elsif (RUBY_VERSION =~ /3.1/)
 		require 'rb3x/i386/ruby31/ibm_db.so'
