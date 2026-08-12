@@ -561,14 +561,68 @@ static void _ruby_ibm_db_mark_conn_struct(conn_handle *handle)
 }
 /*  */
 
+/* Link a newly allocated statement into its connection's child list, so the
+   connection can invalidate it when the underlying DBC handle is freed. */
+static void _ruby_ibm_db_link_stmt_to_conn(stmt_handle *stmt_res, conn_handle *conn_res)
+{
+  stmt_res->parent_conn     = conn_res;
+  stmt_res->prev_child_stmt = NULL;
+  stmt_res->next_child_stmt = conn_res->first_child_stmt;
+  if ( conn_res->first_child_stmt != NULL ) {
+    conn_res->first_child_stmt->prev_child_stmt = stmt_res;
+  }
+  conn_res->first_child_stmt = stmt_res;
+}
+
+/* Remove a statement from its connection's child list. Idempotent. */
+static void _ruby_ibm_db_unlink_stmt_from_conn(stmt_handle *stmt_res)
+{
+  conn_handle *conn_res = stmt_res->parent_conn;
+  if ( conn_res != NULL ) {
+    if ( stmt_res->prev_child_stmt != NULL ) {
+      stmt_res->prev_child_stmt->next_child_stmt = stmt_res->next_child_stmt;
+    } else {
+      conn_res->first_child_stmt = stmt_res->next_child_stmt;
+    }
+    if ( stmt_res->next_child_stmt != NULL ) {
+      stmt_res->next_child_stmt->prev_child_stmt = stmt_res->prev_child_stmt;
+    }
+  }
+  stmt_res->parent_conn     = NULL;
+  stmt_res->next_child_stmt = NULL;
+  stmt_res->prev_child_stmt = NULL;
+}
+
+/* SQLDisconnect frees every statement handle allocated on the connection at
+   the driver level. Null out the children's hstmt so a later explicit free
+   or GC finalizer does not call SQLFreeHandle on a dangling handle - the
+   Informix ODBC driver segfaults on that where DB2 CLI returns an error. */
+static void _ruby_ibm_db_orphan_child_stmts(conn_handle *conn_res)
+{
+  stmt_handle *cur = conn_res->first_child_stmt;
+  stmt_handle *next = NULL;
+  while ( cur != NULL ) {
+    next = cur->next_child_stmt;
+    cur->hstmt           = SQL_NULL_HSTMT;
+    cur->parent_conn     = NULL;
+    cur->next_child_stmt = NULL;
+    cur->prev_child_stmt = NULL;
+    cur = next;
+  }
+  conn_res->first_child_stmt = NULL;
+}
+
 /*  static void _ruby_ibm_db_free_conn_struct */
 static void _ruby_ibm_db_free_conn_struct(conn_handle *handle)
 {
-  	
+
   int rc;
   end_tran_args *end_X_args;
 
   if ( handle != NULL ) {
+    /* The struct is going away: clear the children's back-pointers no matter
+       how the connection handle itself is disposed of. */
+    _ruby_ibm_db_orphan_child_stmts( handle );
     //Disconnect from DB. If stmt is allocated, it is freed automatically
     if ( handle->handle_active ) {
       if( handle->transaction_active == 1 && handle->auto_commit == 0 ) {
@@ -753,6 +807,8 @@ static stmt_handle *_ibm_db_new_stmt_struct(conn_handle* conn_res)
   stmt_res->ruby_stmt_err_msg    =  NULL;
   stmt_res->ruby_stmt_err_state  =  NULL;
 
+  _ruby_ibm_db_link_stmt_to_conn( stmt_res, conn_res );
+
   return stmt_res;
 }
 /*  */
@@ -777,7 +833,11 @@ static void _ruby_ibm_db_free_stmt_handle_and_resources(stmt_handle *handle)
   int rc;
   if ( handle != NULL ) {
     if( !handle->is_freed ) {
-      rc = SQLFreeHandle( SQL_HANDLE_STMT, handle->hstmt );
+      /* hstmt is nulled when the parent connection is closed or freed: the
+         driver has already released the handle along with the connection. */
+      if ( handle->hstmt != SQL_NULL_HSTMT ) {
+        rc = SQLFreeHandle( SQL_HANDLE_STMT, handle->hstmt );
+      }
 
       _ruby_ibm_db_free_result_struct( handle );
 
@@ -791,6 +851,7 @@ static void _ruby_ibm_db_free_stmt_handle_and_resources(stmt_handle *handle)
       }
       handle->is_freed = 1; /* Indicates that the handle is freed */
     }
+    _ruby_ibm_db_unlink_stmt_from_conn( handle );
   }
 }
 
@@ -2793,7 +2854,7 @@ static int _ruby_ibm_db_set_decfloat_rounding_mode_client( set_handle_attr_args 
       _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, hdbc, SQL_HANDLE_DBC, rc, 1,
                 NULL, NULL, -1, 1, 0 );
       ruby_xfree( rnd_mode );
-      ruby_xfree( stmt_res );
+      _ruby_ibm_db_free_stmt_struct( stmt_res );
       rnd_mode = NULL;
       stmt_res = NULL;
       return rc;
@@ -3855,6 +3916,8 @@ VALUE ibm_db_close(int argc, VALUE *argv, VALUE self)
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
         return_value = Qfalse;
       } else {
+        /* Disconnect released all child statement handles at driver level */
+        _ruby_ibm_db_orphan_child_stmts( conn_res );
         rc = SQLFreeHandle( SQL_HANDLE_DBC, conn_res->hdbc);
         if ( rc == SQL_ERROR ) {
           _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
@@ -4154,7 +4217,7 @@ VALUE ibm_db_columns(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -4339,7 +4402,7 @@ VALUE ibm_db_foreign_keys(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -4496,7 +4559,7 @@ VALUE ibm_db_primary_keys(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -4677,7 +4740,7 @@ VALUE ibm_db_procedure_columns(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -4844,7 +4907,7 @@ VALUE ibm_db_procedures(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -5018,7 +5081,7 @@ VALUE ibm_db_special_columns(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -5214,7 +5277,7 @@ VALUE ibm_db_statistics(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -5375,7 +5438,7 @@ VALUE ibm_db_table_privileges(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -5539,7 +5602,7 @@ VALUE ibm_db_tables(int argc, VALUE *argv, VALUE self)
       rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
       if (rc == SQL_ERROR) {
         _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-        ruby_xfree( stmt_res );
+        _ruby_ibm_db_free_stmt_struct( stmt_res );
         stmt_res = NULL;
         return_value = Qfalse;
       } else {
@@ -5868,7 +5931,7 @@ VALUE ibm_db_exec(int argc, VALUE *argv, VALUE self)
     rc = SQLAllocHandle(SQL_HANDLE_STMT, conn_res->hdbc, &(stmt_res->hstmt));
     if ( rc < SQL_SUCCESS ) {
       _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
-      ruby_xfree( stmt_res );
+      _ruby_ibm_db_free_stmt_struct( stmt_res );
       stmt_res = NULL;
       return_value = Qfalse;
     } else {

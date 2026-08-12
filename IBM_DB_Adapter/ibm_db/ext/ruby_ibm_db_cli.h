@@ -86,6 +86,8 @@ typedef struct _param_cache_node {
   struct _param_cache_node *next; /* Pointer to next node */
 } param_node;
 
+struct _stmt_handle_struct;
+
 typedef struct _conn_handle_struct {
   SQLHANDLE    henv;
   SQLHANDLE    hdbc;
@@ -106,6 +108,12 @@ typedef struct _conn_handle_struct {
   SQLSMALLINT  ruby_error_msg_len;
 
   SQLINTEGER   sqlcode;
+
+  /* Head of the list of dependent statement handles. SQLDisconnect frees all
+     child statement handles at the driver level, so the connection must be
+     able to invalidate its children's hstmt to prevent a later
+     SQLFreeHandle on a dangling handle (segfaults with Informix ODBC). */
+  struct _stmt_handle_struct *first_child_stmt;
 } conn_handle;
 
 typedef union {
@@ -168,6 +176,12 @@ typedef struct _stmt_handle_struct {
   SQLSMALLINT  ruby_stmt_err_msg_len;
   SQLINTEGER   sqlcode;
   int		   rc;
+
+  /* Owning connection and sibling links; parent_conn is NULL once the
+     statement is unlinked or the connection has been closed/freed. */
+  struct _conn_handle_struct *parent_conn;
+  struct _stmt_handle_struct *next_child_stmt;
+  struct _stmt_handle_struct *prev_child_stmt;
 } stmt_handle;
 
 /* 
