@@ -56,7 +56,7 @@ static int  createDbSupported, dropDbSupported; /*1 == TRUE; 0 == FALSE*/
    non-string VALUE (e.g. Qnil) would crash the interpreter. */
 static void _ruby_ibm_db_throw_error( VALUE error ) {
   if ( TYPE(error) == T_STRING ) {
-    _ruby_ibm_db_throw_error( error );
+    rb_throw( RSTRING_PTR(error), Qnil );
   } else {
     rb_throw( "<error message could not be retrieved>", Qnil );
   }
