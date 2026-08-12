@@ -8,11 +8,17 @@ ActiveRecord::Schema.define do
   #                                                                     #
   # ------------------------------------------------------------------- #
 
+  create_table :"\"1_need_quoting\"", force: true do |t|
+    t.string :name
+  end
+
   create_table :accounts, force: true do |t|
     t.references :firm, index: false
     t.string  :firm_name
     t.integer :credit_limit
+    t.string :status
     t.integer "a" * max_identifier_length
+    t.datetime :updated_at
   end
 
   create_table :admin_accounts, force: true do |t|
@@ -32,12 +38,29 @@ ActiveRecord::Schema.define do
     t.string :json_data_empty, null: true, default: "", limit: 1024
     t.text :params
     t.references :account
+    t.json :json_options
+  end
+
+  create_table :admin_user_jsons, force: true do |t|
+    t.string :name
+    t.string :settings, null: true, limit: 1024
+    t.string :parent, null: true, limit: 1024
+    t.string :spouse, null: true, limit: 1024
+    t.string :configs, null: true, limit: 1024
+    # MySQL does not allow default values for blobs. Fake it out with a
+    # big varchar below.
+    t.string :preferences, null: true, default: "", limit: 1024
+    t.string :json_data, null: true, limit: 1024
+    t.string :json_data_empty, null: true, default: "", limit: 1024
+    t.text :params
+    t.references :account
   end
 
   create_table :aircraft, force: true do |t|
     t.string :name
     t.integer :wheels_count, default: 0, null: false
     t.datetime :wheels_owned_at
+    t.timestamp :manufactured_at, default: -> { "CURRENT_TIMESTAMP" }
   end
 
   create_table :articles, force: true do |t|
@@ -53,6 +76,10 @@ ActiveRecord::Schema.define do
     t.references :tag
   end
 
+  create_table :attachments, force: true do |t|
+    t.references :record, polymorphic: true, null: false
+  end
+
   create_table :audit_logs, force: true do |t|
     t.column :message, :string, null: false
     t.column :developer_id, :integer, null: false
@@ -65,12 +92,13 @@ ActiveRecord::Schema.define do
     t.references :author_address_extra
     t.string :organization_id
     t.string :owned_essay_id
+    t.integer :published_author_id
   end
 
   create_table :author_addresses, force: true do |t|
   end
 
-  add_foreign_key :authors, :author_addresses
+  add_foreign_key :authors, :author_addresses, deferrable: :immediate
 
   create_table :author_favorites, force: true do |t|
     t.column :author_id, :integer
@@ -78,14 +106,16 @@ ActiveRecord::Schema.define do
   end
 
   create_table :auto_id_tests, force: true, id: false do |t|
-    t.primary_key :auto_id
     t.integer     :value
+    t.timestamp   :published_at, default: -> { "CURRENT_TIMESTAMP" }
+    t.primary_key :auto_id
   end
 
   create_table :binaries, force: true do |t|
     t.string :name
     t.binary :data
     t.binary :short_data, limit: 2048
+    t.blob :blob_data
   end
 
   create_table :birds, force: true do |t|
@@ -98,6 +128,8 @@ ActiveRecord::Schema.define do
     default_zero = { default: 0 }
     t.references :author
     t.string :format
+    t.integer :format_record_id
+    t.string :format_record_type
     t.column :name, :string
     t.column :status, :integer, **default_zero
     t.column :last_read, :integer, **default_zero
@@ -110,6 +142,7 @@ ActiveRecord::Schema.define do
     t.column :cover, :string, default: "hard"
     t.string :isbn
     t.string :external_id
+    t.column :original_name, :string
     t.datetime :published_on
     t.boolean :boolean_status
     t.index [:author_id, :name], unique: true
@@ -122,9 +155,33 @@ ActiveRecord::Schema.define do
     t.date :updated_on
   end
 
+  create_table :book_identifiers, id: :integer, force: true do |t|
+    t.references :book
+    t.string :id_type, null: false
+    t.string :id_value, null: false
+  end
+
+  create_table :encrypted_books, id: :integer, force: true do |t|
+    t.references :author
+    t.string :format
+    t.column :name, :string, default: "<untitled>", limit: 1024
+    t.column :original_name, :string
+    t.column :logo, :binary
+
+    t.datetime :created_at
+    t.datetime :updated_at
+  end
+
+  create_table :hardbacks, force: true do |t|
+  end
+
   create_table :booleans, force: true do |t|
     t.boolean :value
     t.boolean :has_fun, null: false, default: false
+  end
+
+  create_table :branches, force: true do |t|
+    t.references :branch
   end
 
   create_table :bulbs, primary_key: "ID", force: true do |t|
@@ -139,10 +196,13 @@ ActiveRecord::Schema.define do
   end
 
   create_table :cars, force: true do |t|
+    t.belongs_to :person
     t.string  :name
     t.integer :engines_count
     t.integer :wheels_count, default: 0, null: false
     t.datetime :wheels_owned_at
+    t.integer :bulbs_count
+    t.integer :custom_tyres_count
     t.column :lock_version, :integer, null: false, default: 0
     t.timestamps null: false
   end
@@ -153,12 +213,12 @@ ActiveRecord::Schema.define do
   create_table :carriers, force: true
 
   create_table :carts, force: true, primary_key: [:shop_id, :id] do |t|
-    if current_adapter?(:Mysql2Adapter)
+    if ActiveRecord::TestCase.current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
       t.bigint :id, index: true, auto_increment: true, null: false
     else
       t.bigint :id, index: true, null: false
     end
-    t.bigint :shop_id, null: false
+    t.bigint :shop_id
     t.string :title
   end
 
@@ -187,6 +247,135 @@ ActiveRecord::Schema.define do
     t.references :citation
   end
 
+  create_table :cpk_books, primary_key: [:author_id, :id], force: true do |t|
+    t.integer :author_id
+    t.integer :id
+    t.string :title
+    t.integer :revision
+    t.integer :order_id
+    t.integer :shop_id
+  end
+
+  create_table :cpk_chapters, primary_key: [:author_id, :id], force: true do |t|
+    t.integer :author_id
+    t.integer :id
+    t.integer :book_id
+    t.string :title
+  end
+
+  create_table :cpk_authors, force: true do |t|
+    t.string :name
+  end
+
+  create_table :cpk_posts, primary_key: [:title, :author], force: true do |t|
+    t.string :title
+    t.string :author
+  end
+
+  create_table :cpk_posts_tags, force: true do |t|
+    t.string :post_title
+    t.string :post_author
+    t.integer :tag_id
+  end
+
+  create_table :cpk_comments, force: true do |t|
+    t.string :commentable_title
+    t.string :commentable_author
+    t.string :commentable_type
+    t.text :text
+  end
+
+  create_table :cpk_reviews, force: true do |t|
+    t.integer :author_id
+    t.integer :number
+    t.integer :rating
+    t.string :comment
+  end
+
+  # not a composite primary key on the db level to get autoincrement behavior for `id` column
+  # composite primary key is configured on the model level
+  create_table :cpk_orders, force: true do |t|
+    t.integer :shop_id
+    t.string :status
+    t.integer :books_count, default: 0
+  end
+
+  create_table :cpk_order_tags, primary_key: [:order_id, :tag_id], force: true do |t|
+    t.integer :order_id
+    t.integer :tag_id
+    t.string :attached_by
+    t.string :attached_reason
+  end
+
+  create_table :cpk_tags, force: true do |t|
+    t.string :name, null: false
+  end
+
+  create_table :cpk_order_agreements, force: true do |t|
+    t.integer :order_id
+    t.string :signature
+
+    t.index :order_id
+  end
+
+  create_table :cpk_cars, force: true, primary_key: [:make, :model] do |t|
+    t.string :make, null: false
+    t.string :model, null: false
+  end
+
+  create_table :cpk_car_reviews, force: true do |t|
+    t.string :car_make, null: false
+    t.string :car_model, null: false
+    t.text :comment
+    t.integer :rating
+  end
+
+  create_table :paragraphs, force: true do |t|
+    t.references :book
+  end
+
+  create_table :clothing_items, force: true do |t|
+    t.string :clothing_type
+    t.string :color
+    t.string :type
+    t.string :size
+    if ActiveRecord::TestCase.current_adapter?(:IBM_DBAdapter)
+      t.string :description, limit: 4000
+    else
+      t.text :description
+    end
+
+    t.index [:clothing_type, :color], unique: true
+  end
+
+  create_table :sharded_blogs, force: true do |t|
+    t.string :name
+  end
+
+  create_table :sharded_blog_posts, force: true do |t|
+    t.string :title
+    t.references :parent, polymorphic: true
+    t.integer :blog_id
+    t.integer :revision
+  end
+
+  create_table :sharded_comments, force: true do |t|
+    t.string :body
+    t.integer :blog_post_id
+    t.integer :blog_id
+  end
+
+  create_table :sharded_tags, force: true do |t|
+    t.string :name
+    t.integer :blog_id
+  end
+
+  create_table :sharded_blog_posts_tags, force: true do |t|
+    t.integer :blog_id
+    t.integer :blog_post_id
+    t.integer :tag_id
+  end
+
   create_table :clubs, force: true do |t|
     t.string :name
     t.integer :category_id
@@ -207,8 +396,8 @@ ActiveRecord::Schema.define do
   create_table :comments, force: true do |t|
     t.integer :post_id, null: false
     # use VARCHAR2(4000) instead of CLOB datatype as CLOB data type has many limitations in
-    # Oracle SELECT WHERE clause which causes many unit test failures
-    if current_adapter?(:OracleAdapter, :IBM_DBAdapter)
+    # Oracle/DB2 SELECT WHERE clause which causes many unit test failures
+    if ActiveRecord::Base.connection.adapter_name.match?(/oracle|ibm/i)
       t.string  :body, null: false, limit: 4000
     else
       t.text    :body, null: false
@@ -219,8 +408,12 @@ ActiveRecord::Schema.define do
     t.integer :children_count, default: 0
     t.integer :parent_id
     t.references :author, polymorphic: true
+    # The type of the attribute is a string to make sure preload work when types don't match.
+    # See #14855.
     t.string :resource_id
     t.string :resource_type
+    t.integer :origin_id
+    t.string :origin_type
     t.integer :developer_id
     t.datetime :updated_at
     t.datetime :deleted_at
@@ -228,8 +421,14 @@ ActiveRecord::Schema.define do
     t.integer :company
   end
 
-  create_table :companies, force: true, id: :bigint do |t|
-    t.string  :type
+  create_table :comment_overlapping_counter_caches, force: true do |t|
+    t.integer :user_comments_count_id
+    t.integer :post_comments_count_id
+    t.references :commentable, polymorphic: true, index: false
+  end
+
+  create_table :companies, force: true do |t|
+    t.string :type
     t.references :firm, index: false
     t.string  :firm_name
     t.string  :name
@@ -237,12 +436,19 @@ ActiveRecord::Schema.define do
     t.bigint :rating, default: 1
     t.integer :account_id
     t.string :description, default: ""
+    t.integer :status, default: 0
     t.index [:name, :rating], order: :desc
     t.index [:name, :description], length: 10
     t.index [:firm_id, :type, :rating], name: "company_index", length: { type: 10 }, order: { rating: :desc }
     t.index [:firm_id, :type], name: "company_partial_index", where: "(rating > 10)"
-    t.index :name, name: "company_name_index"
-    t.index "(CASE WHEN rating > 0 THEN lower(name) END) DESC", name: "company_expression_index" if supports_expression_index?
+    t.index [:firm_id], name: "company_nulls_not_distinct", nulls_not_distinct: true
+    t.index :name, name: "company_name_index", using: :btree
+    if supports_expression_index?
+      t.index "(CASE WHEN rating > 0 THEN lower(name) END) DESC", name: "company_expression_index"
+      if ActiveRecord::TestCase.current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
+        t.index "(CONCAT_WS(`firm_name`, `name`, _utf8mb4' '))", name: "full_name_index"
+      end
+    end
   end
 
   create_table :content, force: true do |t|
@@ -266,11 +472,13 @@ ActiveRecord::Schema.define do
     t.integer :developer, null: false
     t.integer :extendedWarranty, null: false
     t.integer :timezone
+    t.timestamps
   end
 
   create_table :computers_developers, id: false, force: true do |t|
     t.references :computer
     t.references :developer
+    t.timestamps
   end
 
   create_table :contracts, force: true do |t|
@@ -310,38 +518,41 @@ ActiveRecord::Schema.define do
     t.boolean :deleted
   end
 
+  create_table :discounts, force: true do |t|
+    t.integer :amount
+  end
+
   create_table :dl_keyed_belongs_tos, force: true, id: false do |t|
     t.primary_key :belongs_key
     t.references :destroy_async_parent
   end
 
   create_table :dl_keyed_belongs_to_soft_deletes, force: true do |t|
-    t.references :destroy_async_parent_soft_delete,
-      index: { name: :soft_del_parent }
+    t.references :destroy_async_parent_soft_delete, index: { name: :soft_del_parent }
     t.boolean :deleted
   end
 
   create_table :dl_keyed_has_ones, force: true, id: false do |t|
-   t.primary_key :has_one_key
+    t.primary_key :has_one_key
 
-   t.references :destroy_async_parent
-   t.references :destroy_async_parent_soft_delete
- end
+    t.references :destroy_async_parent
+    t.references :destroy_async_parent_soft_delete
+  end
 
   create_table :dl_keyed_has_manies, force: true, id: false do |t|
-   t.primary_key :many_key
-   t.references :destroy_async_parent
- end
+    t.primary_key :many_key
+    t.references :destroy_async_parent
+  end
 
   create_table :dl_keyed_has_many_throughs, force: true, id: false do |t|
-   t.primary_key :through_key
- end
+    t.primary_key :through_key
+  end
 
   create_table :dl_keyed_joins, force: true, id: false do |t|
-   t.primary_key :joins_key
-   t.references :destroy_async_parent
-   t.references :dl_keyed_has_many_through
- end
+    t.primary_key :joins_key
+    t.references :destroy_async_parent
+    t.references :dl_keyed_has_many_through
+  end
 
   create_table :developers, force: true do |t|
     t.string   :name
@@ -349,17 +560,10 @@ ActiveRecord::Schema.define do
     t.integer  :salary, default: 70000
     t.references :firm, index: false
     t.integer :mentor_id
-    if supports_datetime_with_precision?
-      t.datetime :legacy_created_at, precision: 6
-      t.datetime :legacy_updated_at, precision: 6
-      t.datetime :legacy_created_on, precision: 6
-      t.datetime :legacy_updated_on, precision: 6
-    else
-      t.datetime :legacy_created_at
-      t.datetime :legacy_updated_at
-      t.datetime :legacy_created_on
-      t.datetime :legacy_updated_on
-    end
+    t.datetime :legacy_created_at
+    t.datetime :legacy_updated_at
+    t.datetime :legacy_created_on
+    t.datetime :legacy_updated_on
   end
 
   create_table :developers_projects, force: true, id: false do |t|
@@ -393,6 +597,15 @@ ActiveRecord::Schema.define do
     t.index [:source_id, :sink_id], unique: true, name: "unique_edge_index"
   end
 
+  create_table :editorships, force: true do |t|
+    t.string :publication_id
+    t.string :editor_id
+  end
+
+  create_table :editors, force: true do |t|
+    t.string :name
+  end
+
   create_table :engines, force: true do |t|
     t.references :car, index: false
   end
@@ -403,8 +616,10 @@ ActiveRecord::Schema.define do
   end
 
   create_table :entries, force: true do |t|
-    t.string  :entryable_type, null: false
-    t.integer :entryable_id, null: false
+    t.string   :entryable_type, null: false
+    t.integer  :entryable_id, null: false
+    t.integer  :account_id, null: false
+    t.datetime :updated_at
   end
 
   create_table :essays, force: true do |t|
@@ -482,11 +697,7 @@ ActiveRecord::Schema.define do
 
   create_table :invoices, force: true do |t|
     t.integer :balance
-    if supports_datetime_with_precision?
-      t.datetime :updated_at, precision: 6
-    else
-      t.datetime :updated_at
-    end
+    t.datetime :updated_at
   end
 
   create_table :iris, force: true do |t|
@@ -535,13 +746,18 @@ ActiveRecord::Schema.define do
     t.integer :college_id
   end
 
-  add_foreign_key :lessons_students, :students, on_delete: :cascade
+  add_foreign_key :lessons_students, :students, on_delete: :cascade, deferrable: :immediate
 
   create_table :lint_models, force: true
 
   create_table :line_items, force: true do |t|
     t.integer :invoice_id
     t.integer :amount
+  end
+
+  create_table :line_item_discount_applications, force: true do |t|
+    t.integer :line_item_id
+    t.integer :discount_id
   end
 
   create_table :lions, force: true do |t|
@@ -590,7 +806,7 @@ ActiveRecord::Schema.define do
   create_table :memberships, force: true do |t|
     t.datetime :joined_on
     t.integer :club_id, :member_id
-    t.boolean :favourite, default: false
+    t.boolean :favorite, default: false
     t.integer :type
     t.datetime :created_at
     t.datetime :updated_at
@@ -605,7 +821,8 @@ ActiveRecord::Schema.define do
   end
 
   create_table :messages, force: true do |t|
-    t.string :subject
+    t.string   :subject
+    t.datetime :updated_at
   end
 
   create_table :minivans, force: true, id: false do |t|
@@ -616,6 +833,7 @@ ActiveRecord::Schema.define do
   end
 
   create_table :minimalistics, force: true do |t|
+    t.bigint :expires_at
   end
 
   create_table :mixed_case_monkeys, force: true, id: false do |t|
@@ -655,13 +873,14 @@ ActiveRecord::Schema.define do
     t.decimal :my_house_population, precision: 2, scale: 0
     t.decimal :decimal_number
     t.decimal :decimal_number_with_default, precision: 3, scale: 2, default: 2.78
+    t.numeric :numeric_number
     t.float   :temperature
+    t.float   :temperature_with_limit, limit: 24
     t.decimal :decimal_number_big_precision, precision: 20
-    # Oracle/SQLServer supports precision up to 38
-    if current_adapter?(:OracleAdapter, :SQLServerAdapter)
-      t.decimal :atoms_in_universe, precision: 38, scale: 0
-    else
+    if ActiveRecord::TestCase.current_adapter?(:IBM_DBAdapter)
       t.decimal :atoms_in_universe, precision: 31, scale: 0
+    else
+      t.decimal :atoms_in_universe, precision: 55, scale: 0
     end
   end
 
@@ -677,11 +896,7 @@ ActiveRecord::Schema.define do
 
   create_table :owners, primary_key: :owner_id, force: true do |t|
     t.string :name
-    if supports_datetime_with_precision?
-      t.column :updated_at, :datetime, precision: 6
-    else
-      t.column :updated_at, :datetime
-    end
+    t.column :updated_at, :datetime
     t.column :happy_at,   :datetime
     t.string :essay_id
   end
@@ -697,34 +912,23 @@ ActiveRecord::Schema.define do
   disable_referential_integrity do
     create_table :parrots, force: :cascade do |t|
       t.string :name
+      t.integer :breed, default: 0
       t.string :color
       t.string :parrot_sti_class
       t.integer :killer_id
       t.integer :updated_count, :integer, default: 0
-      if supports_datetime_with_precision?
-        t.datetime :created_at, precision: 0
-        t.datetime :created_on, precision: 0
-        t.datetime :updated_at, precision: 0
-        t.datetime :updated_on, precision: 0
-      else
-        t.datetime :created_at
-        t.datetime :created_on
-        t.datetime :updated_at
-        t.datetime :updated_on
-      end
+      t.datetime :created_at, precision: 0
+      t.datetime :created_on, precision: 0
+      t.datetime :updated_at, precision: 0
+      t.datetime :updated_on, precision: 0
     end
 
     create_table :pirates, force: :cascade do |t|
       t.string :catchphrase
       t.integer :parrot_id
       t.integer :non_validated_parrot_id
-      if supports_datetime_with_precision?
-        t.datetime :created_on, precision: 6
-        t.datetime :updated_on, precision: 6
-      else
-        t.datetime :created_on
-        t.datetime :updated_on
-      end
+      t.datetime :created_on
+      t.datetime :updated_on
     end
 
     create_table :treasures, force: :cascade do |t|
@@ -739,7 +943,14 @@ ActiveRecord::Schema.define do
       t.references :pirate, foreign_key: true
     end
 
+    # used by tests that do `Parrot.has_and_belongs_to_many :treasures` (the default)
     create_table :parrots_treasures, id: false, force: true do |t|
+      t.references :parrot, foreign_key: true
+      t.references :treasure, foreign_key: true
+    end
+
+    # used by tests that do `Parrot.has_many :treasures, through: :parrot_treasures`, and don't want to override the through relation's `table_name`
+    create_table :parrot_treasures, id: false, force: true do |t|
       t.references :parrot, foreign_key: true
       t.references :treasure, foreign_key: true
     end
@@ -758,6 +969,7 @@ ActiveRecord::Schema.define do
     t.references :best_friend_of
     t.integer    :insures, null: false, default: 0
     t.timestamp :born_at
+    t.integer :cars_count, default: 0
     t.timestamps null: false
   end
 
@@ -785,11 +997,11 @@ ActiveRecord::Schema.define do
   end
 
   create_table :posts, force: true do |t|
-    t.references :author, type: :integer
+    t.references :author
     t.string :title, null: false
     # use VARCHAR2(4000) instead of CLOB datatype as CLOB data type has many limitations in
-    # Oracle SELECT WHERE clause which causes many unit test failures
-    if current_adapter?(:OracleAdapter, :IBM_DBAdapter)
+    # Oracle/DB2 SELECT WHERE clause which causes many unit test failures
+    if ActiveRecord::TestCase.current_adapter?(:OracleAdapter, :IBM_DBAdapter)
       t.string  :body, null: false, limit: 4000
     else
       t.text    :body, null: false
@@ -802,6 +1014,15 @@ ActiveRecord::Schema.define do
     t.integer :indestructible_tags_count, default: 0
     t.integer :tags_with_destroy_count, default: 0
     t.integer :tags_with_nullify_count, default: 0
+  end
+
+  create_table :postesques, force: true do |t|
+    t.string :author_name
+    t.string :author_id
+  end
+
+  create_table :post_comments_counts, force: true do |t|
+    t.integer :comments_count, default: 0
   end
 
   create_table :serialized_posts, force: true do |t|
@@ -842,6 +1063,11 @@ ActiveRecord::Schema.define do
     t.integer :mentor_id
   end
 
+  create_table :publications, force: true do |t|
+    t.column :name, :string
+    t.integer :editor_in_chief_id
+  end
+
   create_table :randomly_named_table1, force: true do |t|
     t.string  :some_attribute
     t.integer :another_attribute
@@ -872,13 +1098,15 @@ ActiveRecord::Schema.define do
   create_table :references, force: true do |t|
     t.integer :person_id
     t.integer :job_id
-    t.boolean :favourite
+    t.boolean :favorite
     t.integer :lock_version, default: 0
   end
 
   create_table :rooms, force: true do |t|
     t.references :user
     t.references :owner
+    t.references :landlord
+    t.references :tenant
   end
 
   disable_referential_integrity do
@@ -906,6 +1134,16 @@ ActiveRecord::Schema.define do
     t.integer :shape_id
   end
 
+  create_table :shipping_lines, force: true do |t|
+    t.integer :invoice_id
+    t.integer :amount
+  end
+
+  create_table :shipping_line_discount_applications, force: true do |t|
+    t.integer :shipping_line_id
+    t.integer :discount_id
+  end
+
   create_table :ships, force: true do |t|
     t.string :name
     t.integer :pirate_id
@@ -922,11 +1160,7 @@ ActiveRecord::Schema.define do
   create_table :ship_parts, force: true do |t|
     t.string :name
     t.integer :ship_id
-    if supports_datetime_with_precision?
-      t.datetime :updated_at, precision: 6
-    else
-      t.datetime :updated_at
-    end
+    t.datetime :updated_at
   end
 
   create_table :squeaks, force: true do |t|
@@ -1002,22 +1236,12 @@ ActiveRecord::Schema.define do
     t.string   :title, limit: 250
     t.string   :author_name
     t.string   :author_email_address
-    if supports_datetime_with_precision?
-      t.datetime :written_on, precision: 6
-    else
-      t.datetime :written_on
-    end
+    t.datetime :written_on
     t.time     :bonus_time
     t.date     :last_read
-    # use VARCHAR2(4000) instead of CLOB datatype as CLOB data type has many limitations in
-    # Oracle SELECT WHERE clause which causes many unit test failures
-    if current_adapter?(:OracleAdapter)
-      t.string   :content, limit: 4000
-      t.string   :important, limit: 4000
-    else
-      t.text     :content
-      t.text     :important
-    end
+    t.text     :content
+    t.text     :important
+    t.blob     :binary_content
     t.boolean  :approved, default: true
     t.integer  :replies_count, default: 0
     t.integer  :unique_replies_count, default: 0
@@ -1041,6 +1265,13 @@ ActiveRecord::Schema.define do
     t.text     :long_state, null: false
     t.datetime :created_at
     t.datetime :updated_at
+  end
+
+  create_table :translations, force: true do |t|
+    t.string :locale, null: false
+    t.string :key, null: false
+    t.string :value, null: false
+    t.references :attachment
   end
 
   create_table :tuning_pegs, force: true do |t|
@@ -1068,7 +1299,7 @@ ActiveRecord::Schema.define do
     t.column :label, :string
   end
 
-  create_table "warehouse_things", force: true do |t|
+  create_table :warehouse_things, force: true do |t|
     t.integer :value
   end
 
@@ -1179,6 +1410,11 @@ ActiveRecord::Schema.define do
     t.integer :hotel_id
   end
 
+  create_table :recipients, force: true do |t|
+    t.integer  :message_id
+    t.string   :email_address
+  end
+
   create_table :records, force: true do |t|
   end
 
@@ -1189,6 +1425,16 @@ ActiveRecord::Schema.define do
     create_table :fk_test_has_fk, force: true do |t|
       t.references :fk, null: false
       t.foreign_key :fk_test_has_pk, column: "fk_id", name: "fk_name", primary_key: "pk_id"
+    end
+  end
+
+  disable_referential_integrity do
+    create_table :fk_object_to_point_tos, force: :cascade do |t|
+    end
+
+    create_table :fk_pointing_to_non_existent_objects, force: true do |t|
+      t.references :fk_object_to_point_to, null: false, index: false
+      t.foreign_key :fk_object_to_point_tos, column: "fk_object_to_point_to_id", name: "fk_that_will_be_broken"
     end
   end
 
@@ -1204,6 +1450,13 @@ ActiveRecord::Schema.define do
   create_table :users, force: true do |t|
     t.string :token
     t.string :auth_token
+    t.string :password_digest
+    t.string :recovery_password_digest
+    t.timestamps null: true
+  end
+
+  create_table :user_comments_counts, force: true do |t|
+    t.integer :comments_count, default: 0
   end
 
   create_table :test_with_keyword_column_name, force: true do |t|
@@ -1214,24 +1467,29 @@ ActiveRecord::Schema.define do
     t.integer :id
     t.datetime :created_at
   end
+
+  create_table :toooooooooooooooooooooooooooooooooo_long_table_names, force: true do |t|
+    t.bigint :toooooooo_long_a_id, null: false
+    t.bigint :toooooooo_long_b_id, null: false
+  end
 end
 
-Course.connection.create_table :courses, force: true do |t|
+Course.lease_connection.create_table :courses, force: true do |t|
   t.column :name, :string, null: false
-  t.column :college_id, :integer
+  t.column :college_id, :integer, index: true
 end
 
-College.connection.create_table :colleges, force: true do |t|
+College.lease_connection.create_table :colleges, force: true do |t|
   t.column :name, :string, null: false
 end
 
-Professor.connection.create_table :professors, force: true do |t|
+Professor.lease_connection.create_table :professors, force: true do |t|
   t.column :name, :string, null: false
 end
 
-Professor.connection.create_table :courses_professors, id: false, force: true do |t|
+Professor.lease_connection.create_table :courses_professors, id: false, force: true do |t|
   t.references :course
   t.references :professor
 end
 
-OtherDog.connection.create_table :dogs, force: true
+OtherDog.lease_connection.create_table :dogs, force: true

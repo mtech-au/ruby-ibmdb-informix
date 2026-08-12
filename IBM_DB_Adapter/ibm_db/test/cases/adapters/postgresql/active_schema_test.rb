@@ -4,7 +4,7 @@ require "cases/helper"
 
 class PostgresqlActiveSchemaTest < ActiveRecord::PostgreSQLTestCase
   def setup
-    ActiveRecord::Base.connection.materialize_transactions
+    ActiveRecord::Base.lease_connection.materialize_transactions
 
     ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.class_eval do
       def execute(sql, name = nil) sql end
@@ -73,6 +73,11 @@ class PostgresqlActiveSchemaTest < ActiveRecord::PostgreSQLTestCase
     expected = %(CREATE INDEX IF NOT EXISTS "index_people_on_last_name" ON "people" ("last_name"))
     assert_equal expected, add_index(:people, :last_name, if_not_exists: true)
 
+    if supports_nulls_not_distinct?
+      expected = %(CREATE INDEX "index_people_on_last_name" ON "people" ("last_name") NULLS NOT DISTINCT)
+      assert_equal expected, add_index(:people, :last_name, nulls_not_distinct: true)
+    end
+
     assert_raise ArgumentError do
       add_index(:people, :last_name, algorithm: :copy)
     end
@@ -106,8 +111,7 @@ class PostgresqlActiveSchemaTest < ActiveRecord::PostgreSQLTestCase
   end
 
   private
-    def method_missing(method_symbol, *arguments)
-      ActiveRecord::Base.connection.public_send(method_symbol, *arguments)
+    def method_missing(...)
+      ActiveRecord::Base.lease_connection.public_send(...)
     end
-    ruby2_keywords(:method_missing) if respond_to?(:ruby2_keywords, true)
 end

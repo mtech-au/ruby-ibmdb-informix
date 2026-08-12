@@ -2,6 +2,7 @@ awdr:
   author_id: 1
   id: 1
   name: "Agile Web Development with Rails"
+  isbn: "9780000000001"
   format: "paperback"
   status: :published
   last_read: :read
@@ -11,28 +12,28 @@ awdr:
   font_size: :medium
   difficulty: :medium
   boolean_status: :enabled
-  isbn: "A"
+  cover: "soft"
 
 rfr:
   author_id: 1
   id: 2
   name: "Ruby for Rails"
+  isbn: "9780000000002"
   format: "ebook"
   status: "proposed"
   last_read: "reading"
-  isbn: "B"
 
 ddd:
   author_id: 1
   id: 3
   name: "Domain-Driven Design"
+  isbn: "9780000000003"
   format: "hardcover"
   status: 2
   last_read: "forgotten"
-  isbn: "C"
 
 tlg:
   author_id: 1
   id: 4
   name: "Thoughtleadering"
-  isbn: "D"
+  isbn: "9780000000004"

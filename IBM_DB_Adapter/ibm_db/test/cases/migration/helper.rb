@@ -18,7 +18,10 @@ module ActiveRecord
 
       def setup
         super
-        @connection = ActiveRecord::Base.connection
+        @connection = ActiveRecord::Base.lease_connection
+        connection.drop_table :testings, if_exists: true rescue nil
+        connection.drop_table :testing, if_exists: true rescue nil
+        connection.drop_table :test_models, if_exists: true rescue nil
         connection.create_table :test_models do |t|
           t.timestamps null: true
         end

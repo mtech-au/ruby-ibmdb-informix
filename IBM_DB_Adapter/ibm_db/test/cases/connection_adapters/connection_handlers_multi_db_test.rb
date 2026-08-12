@@ -12,7 +12,7 @@ module ActiveRecord
 
       def setup
         @handler = ConnectionHandler.new
-        @owner_name = "ActiveRecord::Base"
+        @connection_name = "ActiveRecord::Base"
         db_config = ActiveRecord::Base.configurations.configs_for(env_name: "arunit", name: "primary")
         @rw_pool = @handler.establish_connection(db_config)
         @ro_pool = @handler.establish_connection(db_config, role: :reading)
@@ -20,6 +20,16 @@ module ActiveRecord
 
       def teardown
         clean_up_connection_handler
+      end
+
+      def skip_for_ibm_db_external_adapter_configs!
+        @prev_configs = ActiveRecord::Base.configurations
+
+        using_ibm_db = current_adapter?(:IBM_DBAdapter) ||
+          ActiveRecord::Base.connection.adapter_name == "IBM_DB" ||
+          ActiveRecord::Base.connection_db_config.adapter == "ibm_db"
+
+        skip "Requires sqlite3/pg adapter gems not present for IBM_DB adapter runs" if using_ibm_db
       end
 
       class SecondaryBase < ActiveRecord::Base
@@ -30,6 +40,8 @@ module ActiveRecord
       end
 
       def test_multiple_connections_works_in_a_threaded_environment
+        skip_for_ibm_db_external_adapter_configs!
+
         tf_writing = Tempfile.open "test_writing"
         tf_reading = Tempfile.open "test_reading"
 
@@ -37,48 +49,50 @@ module ActiveRecord
         # and won't be able to write to the second connection.
         SecondaryBase.connects_to database: { writing: { database: tf_writing.path, adapter: "sqlite3" }, secondary: { database: tf_reading.path, adapter: "sqlite3" } }
 
-        MultiConnectionTestModel.connection.execute("CREATE TABLE `multi_connection_test_models` (connection_role VARCHAR (255))")
-        MultiConnectionTestModel.connection.execute("INSERT INTO multi_connection_test_models VALUES ('writing')")
+        MultiConnectionTestModel.lease_connection.execute("CREATE TABLE `multi_connection_test_models` (connection_role VARCHAR (255))")
+        MultiConnectionTestModel.lease_connection.execute("INSERT INTO multi_connection_test_models VALUES ('writing')")
 
         ActiveRecord::Base.connected_to(role: :secondary) do
-          MultiConnectionTestModel.connection.execute("CREATE TABLE `multi_connection_test_models` (connection_role VARCHAR (255))")
-          MultiConnectionTestModel.connection.execute("INSERT INTO multi_connection_test_models VALUES ('reading')")
+          MultiConnectionTestModel.lease_connection.execute("CREATE TABLE `multi_connection_test_models` (connection_role VARCHAR (255))")
+          MultiConnectionTestModel.lease_connection.execute("INSERT INTO multi_connection_test_models VALUES ('reading')")
         end
 
         read_latch = Concurrent::CountDownLatch.new
         write_latch = Concurrent::CountDownLatch.new
 
-        MultiConnectionTestModel.connection
+        MultiConnectionTestModel.lease_connection
 
         thread = Thread.new do
-          MultiConnectionTestModel.connection
+          MultiConnectionTestModel.lease_connection
 
           write_latch.wait
-          assert_equal "writing", MultiConnectionTestModel.connection.select_value("SELECT connection_role from multi_connection_test_models")
+          assert_equal "writing", MultiConnectionTestModel.lease_connection.select_value("SELECT connection_role from multi_connection_test_models")
           read_latch.count_down
         end
 
         ActiveRecord::Base.connected_to(role: :secondary) do
           write_latch.count_down
-          assert_equal "reading", MultiConnectionTestModel.connection.select_value("SELECT connection_role from multi_connection_test_models")
+          assert_equal "reading", MultiConnectionTestModel.lease_connection.select_value("SELECT connection_role from multi_connection_test_models")
           read_latch.wait
         end
 
         thread.join
       ensure
-        tf_reading.close
-        tf_reading.unlink
-        tf_writing.close
-        tf_writing.unlink
+        tf_reading&.close
+        tf_reading&.unlink
+        tf_writing&.close
+        tf_writing&.unlink
       end
 
       def test_loading_relations_with_multi_db_connections
+        skip_for_ibm_db_external_adapter_configs!
+
         # We need to use a role for reading not named reading, otherwise we'll prevent writes
         # and won't be able to write to the second connection.
         SecondaryBase.connects_to database: { writing: { database: ":memory:", adapter: "sqlite3" }, secondary: { database: ":memory:", adapter: "sqlite3" } }
 
         relation = ActiveRecord::Base.connected_to(role: :secondary) do
-          MultiConnectionTestModel.connection.execute("CREATE TABLE `multi_connection_test_models` (connection_role VARCHAR (255))")
+          MultiConnectionTestModel.lease_connection.execute("CREATE TABLE `multi_connection_test_models` (connection_role VARCHAR (255))")
           MultiConnectionTestModel.create!(connection_role: "reading")
           MultiConnectionTestModel.where(connection_role: "reading")
         end
@@ -88,6 +102,8 @@ module ActiveRecord
 
       unless in_memory_db?
         def test_establish_connection_using_3_levels_config
+          skip_for_ibm_db_external_adapter_configs!
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -114,6 +130,8 @@ module ActiveRecord
         end
 
         def test_switching_connections_via_handler
+          skip_for_ibm_db_external_adapter_configs!
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -130,14 +148,14 @@ module ActiveRecord
             assert_equal :reading, ActiveRecord::Base.current_role
             assert ActiveRecord::Base.connected_to?(role: :reading)
             assert_not ActiveRecord::Base.connected_to?(role: :writing)
-            assert_predicate ActiveRecord::Base.connection, :preventing_writes?
+            assert_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
           end
 
           ActiveRecord::Base.connected_to(role: :writing) do
             assert_equal :writing, ActiveRecord::Base.current_role
             assert ActiveRecord::Base.connected_to?(role: :writing)
             assert_not ActiveRecord::Base.connected_to?(role: :reading)
-            assert_not_predicate ActiveRecord::Base.connection, :preventing_writes?
+            assert_not_predicate ActiveRecord::Base.lease_connection, :preventing_writes?
           end
         ensure
           ActiveRecord::Base.configurations = @prev_configs
@@ -146,6 +164,8 @@ module ActiveRecord
         end
 
         def test_establish_connection_using_3_levels_config_with_non_default_handlers
+          skip_for_ibm_db_external_adapter_configs!
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -170,6 +190,8 @@ module ActiveRecord
         end
 
         def test_switching_connections_with_database_url
+          skip_for_ibm_db_external_adapter_configs!
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
           previous_url, ENV["DATABASE_URL"] = ENV["DATABASE_URL"], "postgres://localhost/foo"
 
@@ -189,6 +211,8 @@ module ActiveRecord
         end
 
         def test_switching_connections_with_database_config_hash
+          skip_for_ibm_db_external_adapter_configs!
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
           config = { adapter: "sqlite3", database: "test/db/readonly.sqlite3" }
 
@@ -206,23 +230,6 @@ module ActiveRecord
           ENV["RAILS_ENV"] = previous_env
         end
 
-        def test_switching_connections_with_database_and_role_raises
-          error = assert_raises(ArgumentError) do
-            assert_deprecated do
-              ActiveRecord::Base.connected_to(database: :readonly, role: :writing) { }
-            end
-          end
-          assert_equal "`connected_to` cannot accept a `database` argument with any other arguments.", error.message
-        end
-
-        def test_database_argument_is_deprecated
-          assert_deprecated do
-            ActiveRecord::Base.connected_to(database: { writing: { adapter: "sqlite3", database: "test/db/primary.sqlite3" } }) { }
-          end
-        ensure
-          ActiveRecord::Base.establish_connection(:arunit)
-        end
-
         def test_switching_connections_without_database_and_role_raises
           error = assert_raises(ArgumentError) do
             ActiveRecord::Base.connected_to { }
@@ -231,6 +238,8 @@ module ActiveRecord
         end
 
         def test_switching_connections_with_database_symbol_uses_default_role
+          skip_for_ibm_db_external_adapter_configs!
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -257,6 +266,8 @@ module ActiveRecord
         end
 
         def test_switching_connections_with_database_hash_uses_passed_role_and_database
+          skip_for_ibm_db_external_adapter_configs!
+
           previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
 
           config = {
@@ -283,6 +294,8 @@ module ActiveRecord
         end
 
         def test_connects_to_with_single_configuration
+          skip_for_ibm_db_external_adapter_configs!
+
           config = {
             "development" => { "adapter" => "sqlite3", "database" => "test/db/primary.sqlite3" },
           }
@@ -299,6 +312,8 @@ module ActiveRecord
         end
 
         def test_connects_to_using_top_level_key_in_two_level_config
+          skip_for_ibm_db_external_adapter_configs!
+
           config = {
             "development" => { "adapter" => "sqlite3", "database" => "test/db/primary.sqlite3" },
             "development_readonly" => { "adapter" => "sqlite3", "database" => "test/db/readonly.sqlite3" }
@@ -315,6 +330,8 @@ module ActiveRecord
         end
 
         def test_connects_to_returns_array_of_established_connections
+          skip_for_ibm_db_external_adapter_configs!
+
           config = {
             "development" => { "adapter" => "sqlite3", "database" => "test/db/primary.sqlite3" },
             "development_readonly" => { "adapter" => "sqlite3", "database" => "test/db/readonly.sqlite3" }
@@ -336,31 +353,38 @@ module ActiveRecord
         end
       end
 
-      def test_connection_pools
-        assert_equal([@rw_pool], @handler.connection_pools(:writing))
-        assert_equal([@ro_pool], @handler.connection_pools(:reading))
+      def test_connection_pool_list
+        assert_equal([@rw_pool], @handler.connection_pool_list(:writing))
+        assert_equal([@ro_pool], @handler.connection_pool_list(:reading))
+
+        assert_equal([@rw_pool, @ro_pool], @handler.connection_pool_list)
       end
 
       def test_retrieve_connection
-        assert @handler.retrieve_connection(@owner_name)
-        assert @handler.retrieve_connection(@owner_name, role: :reading)
+        assert @handler.retrieve_connection(@connection_name)
+        assert @handler.retrieve_connection(@connection_name, role: :reading)
       end
 
       def test_active_connections?
         assert_not_predicate @handler, :active_connections?
 
-        assert @handler.retrieve_connection(@owner_name)
-        assert @handler.retrieve_connection(@owner_name, role: :reading)
+        assert @handler.retrieve_connection(@connection_name)
+        assert @handler.retrieve_connection(@connection_name, role: :reading)
 
         assert_predicate @handler, :active_connections?
 
-        @handler.clear_active_connections!
+        @handler.clear_active_connections!(:writing)
+
+        assert_predicate @handler, :active_connections?
+
+        @handler.clear_active_connections!(:all)
+
         assert_not_predicate @handler, :active_connections?
       end
 
       def test_retrieve_connection_pool
-        assert_not_nil @handler.retrieve_connection_pool(@owner_name)
-        assert_not_nil @handler.retrieve_connection_pool(@owner_name, role: :reading)
+        assert_not_nil @handler.retrieve_connection_pool(@connection_name)
+        assert_not_nil @handler.retrieve_connection_pool(@connection_name, role: :reading)
       end
 
       def test_retrieve_connection_pool_with_invalid_id
@@ -369,31 +393,31 @@ module ActiveRecord
       end
 
       def test_calling_connected_to_on_a_non_existent_handler_raises
-        error = assert_raises ActiveRecord::ConnectionNotEstablished do
+        error = assert_raises ActiveRecord::ConnectionNotDefined do
           ActiveRecord::Base.connected_to(role: :non_existent) do
             Person.first
           end
         end
 
-        assert_equal "No connection pool for 'ActiveRecord::Base' found for the 'non_existent' role.", error.message
+        assert_equal "No database connection defined for 'non_existent' role.", error.message
       end
 
       def test_default_handlers_are_writing_and_reading
-        assert_equal :writing, ActiveRecord::Base.writing_role
-        assert_equal :reading, ActiveRecord::Base.reading_role
+        assert_equal :writing, ActiveRecord.writing_role
+        assert_equal :reading, ActiveRecord.reading_role
       end
 
       def test_an_application_can_change_the_default_handlers
-        old_writing = ActiveRecord::Base.writing_role
-        old_reading = ActiveRecord::Base.reading_role
-        ActiveRecord::Base.writing_role = :default
-        ActiveRecord::Base.reading_role = :readonly
+        old_writing = ActiveRecord.writing_role
+        old_reading = ActiveRecord.reading_role
+        ActiveRecord.writing_role = :default
+        ActiveRecord.reading_role = :readonly
 
-        assert_equal :default, ActiveRecord::Base.writing_role
-        assert_equal :readonly, ActiveRecord::Base.reading_role
+        assert_equal :default, ActiveRecord.writing_role
+        assert_equal :readonly, ActiveRecord.reading_role
       ensure
-        ActiveRecord::Base.writing_role = old_writing
-        ActiveRecord::Base.reading_role = old_reading
+        ActiveRecord.writing_role = old_writing
+        ActiveRecord.reading_role = old_reading
       end
     end
   end

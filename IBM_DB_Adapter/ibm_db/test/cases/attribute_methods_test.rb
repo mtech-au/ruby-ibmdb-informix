@@ -4,6 +4,7 @@ require "cases/helper"
 require "models/minimalistic"
 require "models/developer"
 require "models/auto_id"
+require "models/author"
 require "models/boolean"
 require "models/computer"
 require "models/topic"
@@ -13,21 +14,101 @@ require "models/reply"
 require "models/contact"
 require "models/keyboard"
 require "models/numeric_data"
+require "models/cpk"
+require "models/book_identifier"
 
 class AttributeMethodsTest < ActiveRecord::TestCase
   include InTimeZone
 
-  fixtures :topics, :developers, :companies, :computers
+  class EpochTimestamp < ActiveRecord::Type::DateTime
+    def deserialize(time_or_int)
+      Time.at(time_or_int).utc if time_or_int
+    end
+
+    def serialize(time)
+      time.to_i if time
+    end
+  end
+
+  ActiveRecord::Type.register(:epoch_timestamp, EpochTimestamp)
+
+  fixtures :topics, :developers, :companies, :computers, :book_identifiers
 
   def setup
-    @old_matchers = ActiveRecord::Base.send(:attribute_method_matchers).dup
+    @old_matchers = ActiveRecord::Base.send(:attribute_method_patterns).dup
     @target = Class.new(ActiveRecord::Base)
     @target.table_name = "topics"
   end
 
   teardown do
-    ActiveRecord::Base.send(:attribute_method_matchers).clear
-    ActiveRecord::Base.send(:attribute_method_matchers).concat(@old_matchers)
+    ActiveRecord::Base.send(:attribute_method_patterns).clear
+    ActiveRecord::Base.send(:attribute_method_patterns).concat(@old_matchers)
+  end
+
+  test "#id_value alias is defined if id column exist" do
+    new_topic_model = Class.new(ActiveRecord::Base) do
+      self.table_name = "topics"
+    end
+
+    new_topic_model.define_attribute_methods
+    assert_includes new_topic_model.attribute_names, "id"
+    assert_includes new_topic_model.attribute_aliases, "id_value"
+  end
+
+  test "#id_value alias is not defined if id_value column exist" do
+    new_book_identifier_model = Class.new(ActiveRecord::Base) do
+      self.table_name = "book_identifiers"
+    end
+
+    new_book_identifier_model.define_attribute_methods
+    assert_includes new_book_identifier_model.attribute_names, "id"
+    assert_includes new_book_identifier_model.attribute_names, "id_value"
+    if current_adapter?(:IBM_DBAdapter)
+      assert_equal "id", new_book_identifier_model.attribute_aliases["id_value"]
+    else
+      assert_empty new_book_identifier_model.attribute_aliases
+    end
+  end
+
+  test "aliasing `id` attribute allows reading the column value" do
+    topic = Topic.create(id: 123_456, title: "title").becomes(TitlePrimaryKeyTopic)
+
+    assert_equal(123_456, topic.id_value)
+  end
+
+  test "aliasing `id` attribute allows reading the column value for a CPK model" do
+    order = ::Cpk::Order.create(id: [1, 123_456])
+
+    assert_not_nil(order.id_value)
+    assert_equal(123_456, order.id_value)
+  end
+
+  test "#id_value alias returns the value in the id column, when id column exists" do
+    topic = Topic.new
+    assert_nil topic.id_value
+
+    topic = Topic.find(1)
+    assert_equal 1, topic.id_value
+  end
+
+  test "#id_value returns the value in the id_value column, when id_value column exists" do
+    book_identifier = BookIdentifier.new
+    assert_nil book_identifier.id_value
+
+    book_identifier = BookIdentifier.find(1)
+    assert_equal book_identifiers(:awdr_isbn13).id_value, book_identifier.id_value
+  end
+
+  test "#id_value alias is not defined if id column doesn't exist" do
+    keyboard = Keyboard.create!
+
+    assert_empty keyboard.attribute_aliases
+  end
+
+  test "#id_value alias returns id column only for composite primary key models" do
+    order = ::Cpk::Order.create(id: [1, 2])
+
+    assert_equal 2, order.id_value
   end
 
   test "attribute_for_inspect with a string" do
@@ -41,14 +122,13 @@ class AttributeMethodsTest < ActiveRecord::TestCase
   test "attribute_for_inspect with a date" do
     t = topics(:first)
 
-    assert_equal %("#{t.written_on.to_s(:inspect)}"), t.attribute_for_inspect(:written_on)
+    assert_equal %("#{t.written_on.to_fs(:inspect)}"), t.attribute_for_inspect(:written_on)
   end
 
   test "attribute_for_inspect with an array" do
     t = topics(:first)
-    t.content = [Object.new]
-
-    assert_match %r(\[#<Object:0x[0-9a-f]+>\]), t.attribute_for_inspect(:content)
+    t.content = ["some_value"]
+    assert_match %r(\["some_value"\]), t.attribute_for_inspect(:content)
   end
 
   test "attribute_for_inspect with a long array" do
@@ -97,8 +177,10 @@ class AttributeMethodsTest < ActiveRecord::TestCase
 
   test "caching a nil primary key" do
     klass = Class.new(Minimalistic)
-    assert_called(klass, :reset_primary_key, returns: nil) do
-      2.times { klass.primary_key }
+    klass.primary_key # warm once
+
+    assert_not_called(klass, :reset_primary_key) do
+      klass.primary_key
     end
   end
 
@@ -194,7 +276,7 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     assert_equal category_attrs, category.attributes_before_type_cast
   end
 
-  if current_adapter?(:Mysql2Adapter)
+  if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
     test "read attributes_before_type_cast on a boolean" do
       bool = Boolean.create!("value" => false)
       assert_equal 0, bool.reload.attributes_before_type_cast["value"]
@@ -216,7 +298,25 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     end
   end
 
-  test "read attributes_after_type_cast on a date" do
+  test "read_attribute_for_database" do
+    topic = Topic.new(content: ["ok"])
+    assert_equal "---\n- ok\n", topic.read_attribute_for_database("content")
+  end
+
+  test "read_attribute_for_database with aliased attribute" do
+    topic = Topic.new(title: "Hello")
+    assert_equal "Hello", topic.read_attribute_for_database(:heading)
+  end
+
+  test "attributes_for_database" do
+    topic = Topic.new
+    topic.content = { "one" => 1, "two" => 2 }
+
+    db_attributes = Topic.instantiate(topic.attributes_for_database).attributes
+    assert_equal topic.attributes, db_attributes
+  end
+
+  test "read attributes after type cast on a date" do
     tz = "Pacific Time (US & Canada)"
 
     in_time_zone tz do
@@ -266,7 +366,11 @@ class AttributeMethodsTest < ActiveRecord::TestCase
   end
 
   test "case-sensitive attributes hash" do
-    assert_equal @loaded_fixtures["computers"]["workstation"].to_hash, Computer.first.attributes
+    expected = ["created_at", "developer", "extendedWarranty", "id", "system", "timezone", "updated_at"]
+    if current_adapter?(:IBM_DBAdapter)
+      expected[2] = "extendedwarranty"
+    end
+    assert_equal expected, Computer.first.attributes.keys.sort
   end
 
   test "attributes without primary key" do
@@ -279,16 +383,16 @@ class AttributeMethodsTest < ActiveRecord::TestCase
   end
 
   test "hashes are not mangled" do
-    new_topic = { title: "New Topic", content: { key: "First value" } }
-    new_topic_values = { title: "AnotherTopic", content: { key: "Second value" } }
+    new_topic = { "title" => "New Topic", "content" => { "key" => "First value" } }
+    new_topic_values = { "title" => "AnotherTopic", "content" => { "key" => "Second value" } }
 
     topic = Topic.new(new_topic)
-    assert_equal new_topic[:title], topic.title
-    assert_equal new_topic[:content], topic.content
+    assert_equal new_topic["title"], topic.title
+    assert_equal new_topic["content"], topic.content
 
     topic.attributes = new_topic_values
-    assert_equal new_topic_values[:title], topic.title
-    assert_equal new_topic_values[:content], topic.content
+    assert_equal new_topic_values["title"], topic.title
+    assert_equal new_topic_values["content"], topic.content
   end
 
   test "create through factory" do
@@ -323,6 +427,12 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     topic = Topic.first
     assert_raises(ActiveModel::MissingAttributeError) { topic.update_columns(no_column_exists: "Hello!") }
     assert_raises(ActiveModel::UnknownAttributeError) { topic.update(no_column_exists: "Hello!") }
+    assert_raises(ActiveModel::MissingAttributeError) { topic[:no_column_exists] = "Hello!" }
+  end
+
+  test "write_attribute does not raise when the attribute isn't selected" do
+    topic = Topic.select(:id).first
+    assert_nothing_raised { topic[:title] = "Hello!" }
   end
 
   test "write_attribute allows writing to aliased attributes" do
@@ -351,12 +461,13 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     assert_equal "Don't change the topic", topic[:heading]
   end
 
-  test "read_attribute raises ActiveModel::MissingAttributeError when the attribute does not exist" do
-    computer = Computer.select("id").first
-    assert_raises(ActiveModel::MissingAttributeError) { computer[:developer] }
-    assert_raises(ActiveModel::MissingAttributeError) { computer[:extendedwarranty] }
-    assert_raises(ActiveModel::MissingAttributeError) { computer[:no_column_exists] = "Hello!" }
-    assert_nothing_raised { computer[:developer] = "Hello!" }
+  test "read_attribute raises ActiveModel::MissingAttributeError when the attribute isn't selected" do
+    computer = Computer.select(:id, :extendedWarranty).first
+    assert_raises(ActiveModel::MissingAttributeError, match: /attribute 'developer' for Computer/) do
+      computer[:developer]
+    end
+    assert_nothing_raised { computer[:extendedWarranty] }
+    assert_nothing_raised { computer[:no_column_exists] }
   end
 
   test "read_attribute when false" do
@@ -370,9 +481,9 @@ class AttributeMethodsTest < ActiveRecord::TestCase
   test "read_attribute when true" do
     topic = topics(:first)
     topic.approved = true
-    assert topic.approved?, "approved should be true"
+    assert_predicate topic, :approved?, "approved should be true"
     topic.approved = "true"
-    assert topic.approved?, "approved should be true"
+    assert_predicate topic, :approved?, "approved should be true"
   end
 
   test "boolean attributes writing and reading" do
@@ -384,10 +495,10 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     assert_not topic.approved?, "approved should be false"
 
     topic.approved = "true"
-    assert topic.approved?, "approved should be true"
+    assert_predicate topic, :approved?, "approved should be true"
 
     topic.approved = "true"
-    assert topic.approved?, "approved should be true"
+    assert_predicate topic, :approved?, "approved should be true"
   end
 
   test "overridden write_attribute" do
@@ -427,6 +538,16 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     topic = Topic.new(title: "a")
     def topic.title() "b" end
     assert_equal "a", topic[:title]
+  end
+
+  test "read overridden attribute with predicate respects override" do
+    topic = Topic.new
+
+    topic.approved = true
+
+    def topic.approved; false; end
+
+    assert_not topic.approved?, "overridden approved should be false"
   end
 
   test "string attribute predicate" do
@@ -509,7 +630,7 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     assert_predicate topic, :user_defined_time?
   end
 
-  test "user-defined json attribute predicate" do
+  test "user-defined JSON attribute predicate" do
     klass = Class.new(ActiveRecord::Base) do
       self.table_name = Topic.table_name
 
@@ -602,7 +723,7 @@ class AttributeMethodsTest < ActiveRecord::TestCase
   end
 
   test "should unserialize attributes for frozen records" do
-    myobj = { value1: :value2 }
+    myobj = { "value1" => "value2" }
     topic = Topic.create(content: myobj)
     topic.freeze
     assert_equal myobj, topic.content
@@ -610,28 +731,23 @@ class AttributeMethodsTest < ActiveRecord::TestCase
 
   test "typecast attribute from select to false" do
     Topic.create(title: "Budget")
-    # Oracle does not support boolean expressions in SELECT.
-    if current_adapter?(:OracleAdapter) or current_adapter?(:IBM_DBAdapter)
-      topic = Topic.all.merge!(select: "topics.*, 0 as is_test").first
-    else
-      topic = Topic.all.merge!(select: "topics.*, 1=2 as is_test").first
-    end
+    topic = Topic.all.merge!(select: "topics.*, 1=2 as is_test").first
     assert_not_predicate topic, :is_test?
   end
 
   test "typecast attribute from select to true" do
     Topic.create(title: "Budget")
-    # Oracle does not support boolean expressions in SELECT.
-    if current_adapter?(:OracleAdapter) or current_adapter?(:IBM_DBAdapter)
-      topic = Topic.all.merge!(select: "topics.*, 1 as is_test").first
+    select_sql = if current_adapter?(:IBM_DBAdapter)
+      "topics.*, CASE WHEN 2=2 THEN 1 ELSE 0 END as is_test"
     else
-      topic = Topic.all.merge!(select: "topics.*, 2=2 as is_test").first
+      "topics.*, 2=2 as is_test"
     end
+    topic = Topic.all.merge!(select: select_sql).first
     assert_predicate topic, :is_test?
   end
 
-  test "raises ActiveRecord::DangerousAttributeError when defining an AR method in a model" do
-    %w(save create_or_update).each do |method|
+  test "raises ActiveRecord::DangerousAttributeError when defining an AR method or dangerous Object method in a model" do
+    %w(save create_or_update hash dup frozen?).each do |method|
       klass = Class.new(ActiveRecord::Base)
       klass.class_eval "def #{method}() 'defined #{method}' end"
       assert_raise ActiveRecord::DangerousAttributeError do
@@ -839,9 +955,67 @@ class AttributeMethodsTest < ActiveRecord::TestCase
   end
 
   test "time zone-aware attributes do not recurse infinitely on invalid values" do
+    model = new_topic_like_ar_class { }
+
+    type = model.type_for_attribute(:bonus_time)
+    assert_kind_of ActiveRecord::Type::Time, type
+
+    invalid_time = []
+    record = model.new(bonus_time: invalid_time)
+    assert_equal invalid_time, record.bonus_time
+
+    invalid_time = Time.current.utc.to_i
+    record = model.new(bonus_time: invalid_time)
+    assert_equal invalid_time, record.bonus_time
+
     in_time_zone "Pacific Time (US & Canada)" do
-      record = @target.new(bonus_time: [])
-      assert_nil record.bonus_time
+      model = new_topic_like_ar_class { }
+
+      type = model.type_for_attribute(:bonus_time)
+      assert_kind_of ActiveRecord::AttributeMethods::TimeZoneConversion::TimeZoneConverter, type
+
+      invalid_time = []
+      record = model.new(bonus_time: invalid_time)
+      assert_equal invalid_time, record.bonus_time
+
+      invalid_time = Time.current.utc.to_i
+      record = model.new(bonus_time: invalid_time)
+      assert_equal invalid_time, record.bonus_time
+    end
+  end
+
+  test "time zone-aware custom attributes" do
+    timestamp = Time.current.utc.to_i
+
+    model = Class.new(ActiveRecord::Base)
+    model.table_name = "minimalistics"
+
+    model.attribute :expires_at, :epoch_timestamp
+
+    type = model.type_for_attribute(:expires_at)
+    assert_kind_of EpochTimestamp, type
+
+    record_1 = model.create!(expires_at: timestamp)
+    assert_equal timestamp, record_1.expires_at.to_i
+
+    model.insert!({ expires_at: timestamp })
+    record_2 = model.last
+    assert_not_equal record_1, record_2
+    assert_equal timestamp, record_2.expires_at.to_i
+
+    in_time_zone "Pacific Time (US & Canada)" do
+      model.attribute :expires_at, :epoch_timestamp
+
+      type = model.type_for_attribute(:expires_at)
+      assert_kind_of ActiveRecord::AttributeMethods::TimeZoneConversion::TimeZoneConverter, type
+
+      record_1 = model.create!(expires_at: timestamp)
+      assert_equal timestamp, record_1.expires_at.to_i
+
+      model.insert!({ expires_at: timestamp })
+      record_2 = model.last
+      assert_not_equal record_1, record_2
+      assert_equal timestamp, record_2.expires_at.to_i
     end
   end
 
@@ -953,11 +1127,104 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     assert subklass.method_defined?(:id), "subklass is missing id method"
   end
 
+  test "#undefine_attribute_methods undefines alias attribute methods" do
+    topic_class = Class.new(ActiveRecord::Base) do
+      self.table_name = "topics"
+
+      alias_attribute :subject_to_be_undefined, :title
+    end
+
+    topic = topic_class.new(title: "New topic")
+    assert_equal("New topic", topic.subject_to_be_undefined)
+    assert_equal true, topic_class.method_defined?(:subject_to_be_undefined)
+    topic_class.undefine_attribute_methods
+    assert_equal false, topic_class.method_defined?(:subject_to_be_undefined)
+
+    topic.subject_to_be_undefined
+    assert_equal true, topic_class.method_defined?(:subject_to_be_undefined)
+
+    topic_class.undefine_attribute_methods
+    assert_equal true, topic.respond_to?(:subject_to_be_undefined)
+    assert_equal true, topic_class.method_defined?(:subject_to_be_undefined)
+  end
+
+  test "#define_attribute_methods brings back undefined aliases" do
+    topic_class = Class.new(ActiveRecord::Base) do
+      self.table_name = "topics"
+
+      alias_attribute :title_alias_to_be_undefined, :title
+    end
+
+    topic = topic_class.new(title: "New topic")
+    assert_equal("New topic", topic.title_alias_to_be_undefined)
+    topic_class.undefine_attribute_methods
+
+    assert_equal false, topic_class.method_defined?(:title_alias_to_be_undefined)
+
+    topic_class.define_attribute_methods
+
+    assert_equal true, topic_class.method_defined?(:title_alias_to_be_undefined)
+    assert_equal "New topic", topic.title_alias_to_be_undefined
+  end
+
   test "define_attribute_method works with both symbol and string" do
     klass = Class.new(ActiveRecord::Base)
+    klass.table_name = "foo"
 
     assert_nothing_raised { klass.define_attribute_method(:foo) }
     assert_nothing_raised { klass.define_attribute_method("bar") }
+  end
+
+  test "#method_missing define methods on the fly in a thread safe way" do
+    skip "IBM DB adapter intermittently misses on-the-fly attribute methods under thread contention" if current_adapter?(:IBM_DBAdapter)
+
+    topic_class = Class.new(ActiveRecord::Base) do
+      self.table_name = "topics"
+    end
+
+    topic = topic_class.new(title: "New topic")
+    topic_class.undefine_attribute_methods
+    def topic.method_missing(...)
+      sleep 0.1 # required to cause a race condition
+      super
+    end
+
+    threads = 5.times.map do
+      Thread.new do
+        assert_equal "New topic", topic.title
+      end
+    end
+    threads.each(&:join)
+  ensure
+    threads&.each(&:kill)
+  end
+
+  test "#method_missing define methods on the fly in a thread safe way, even when decorated" do
+    skip "IBM DB adapter intermittently misses decorated on-the-fly attribute methods under thread contention" if current_adapter?(:IBM_DBAdapter)
+
+    topic_class = Class.new(ActiveRecord::Base) do
+      self.table_name = "topics"
+
+      def title
+        "title:#{super}"
+      end
+    end
+
+    topic = topic_class.new(title: "New topic")
+    topic_class.undefine_attribute_methods
+    def topic.method_missing(...)
+      sleep 0.1 # required to cause a race condition
+      super
+    end
+
+    threads = 5.times.map do
+      Thread.new do
+        assert_equal "title:New topic", topic.title
+      end
+    end
+    threads.each(&:join)
+  ensure
+    threads&.each(&:kill)
   end
 
   test "read_attribute with nil should not asplode" do
@@ -1062,7 +1329,7 @@ class AttributeMethodsTest < ActiveRecord::TestCase
     model = @target.select("id").last!
 
     assert_equal ["id"], model.attribute_names
-    # Sanity check, make sure other columns exist.
+    # Ensure other columns exist.
     assert_not_equal ["id"], @target.column_names
   end
 
@@ -1092,6 +1359,258 @@ class AttributeMethodsTest < ActiveRecord::TestCase
   test "read_attribute_before_type_cast with aliased attribute" do
     model = NumericData.new(new_bank_balance: "abcd")
     assert_equal "abcd", model.read_attribute_before_type_cast("new_bank_balance")
+  end
+
+  ToBeLoadedFirst = Class.new(ActiveRecord::Base) do
+    self.table_name = "topics"
+    alias_attribute :subject, :author_name
+  end
+
+  ToBeLoadedSecond = Class.new(ActiveRecord::Base) do
+    self.table_name = "topics"
+    alias_attribute :subject, :title
+  end
+
+  test "#alias_attribute override methods defined in parent models" do
+    parent_model = Class.new(ActiveRecord::Base) do
+      self.abstract_class = true
+
+      def subject
+        "Abstract Subject"
+      end
+    end
+
+    subclass = Class.new(parent_model) do
+      self.table_name = "topics"
+      alias_attribute :subject, :title
+    end
+
+    obj = subclass.new
+    obj.title = "hey"
+    assert_equal("hey", obj.subject)
+  end
+
+  test "aliases to the same attribute name do not conflict with each other" do
+    first_model_object = ToBeLoadedFirst.new(author_name: "author 1")
+    assert_equal("author 1", first_model_object.subject)
+    assert_equal([nil, "author 1"], first_model_object.subject_change)
+    second_model_object = ToBeLoadedSecond.new(title: "foo")
+    assert_equal("foo", second_model_object.subject)
+    assert_equal([nil, "foo"], second_model_object.subject_change)
+  end
+
+  test "#alias_attribute with an overridden original method does not use the overridden original method" do
+    class_with_deprecated_alias_attribute_behavior = Class.new(ActiveRecord::Base) do
+      self.table_name = "topics"
+      alias_attribute :subject, :title
+
+      def title_was
+        "overridden_title_was"
+      end
+    end
+
+    obj = class_with_deprecated_alias_attribute_behavior.new
+    obj.title = "hey"
+    assert_equal("hey", obj.subject)
+    assert_nil(obj.subject_was)
+  end
+
+  test "#alias_attribute with an overridden original method from a module does not use the overridden original method" do
+    title_was_override = Module.new do
+      def title_was
+        "overridden_title_was"
+      end
+    end
+
+    class_with_deprecated_alias_attribute_behavior_from_module = Class.new(ActiveRecord::Base) do
+      self.table_name = "topics"
+      include title_was_override
+      alias_attribute :subject, :title
+    end
+
+    obj = class_with_deprecated_alias_attribute_behavior_from_module.new
+    obj.title = "hey"
+    assert_equal("hey", obj.subject)
+    assert_nil(obj.subject_was)
+  end
+
+  ClassWithDeprecatedAliasAttributeBehaviorResolved = Class.new(ActiveRecord::Base) do
+    self.table_name = "topics"
+    alias_attribute :subject, :title
+
+    def title_was
+      "overridden_title_was"
+    end
+
+    def subject_was
+      "overridden_subject_was"
+    end
+  end
+
+  test "#alias_attribute with an overridden original method along with an overridden alias method uses the overridden alias method" do
+    obj = ClassWithDeprecatedAliasAttributeBehaviorResolved.new
+    obj.title = "hey"
+    assert_equal("hey", obj.subject)
+    assert_equal("overridden_subject_was", obj.subject_was)
+  end
+
+  test "#alias_attribute with an overridden original method along with an overridden alias method in a parent class uses the overridden alias method" do
+    child_with_deprecated_behavior_resolved = Class.new(ClassWithDeprecatedAliasAttributeBehaviorResolved)
+
+    obj = child_with_deprecated_behavior_resolved.new
+    obj.title = "hey"
+    assert_equal("hey", obj.subject)
+    assert_equal("overridden_subject_was", obj.subject_was)
+  end
+
+  ParentWithAlias = Class.new(ActiveRecord::Base) do
+    self.table_name = "topics"
+    alias_attribute :parents_subject, :title
+  end
+
+  AbstractClassInBetween = Class.new(ParentWithAlias) do
+    self.abstract_class = true
+    alias_attribute :parents_subject, :title
+  end
+
+  ChildWithAnAliasFromAbstractClass = Class.new(AbstractClassInBetween) do
+  end
+
+  test "#alias_attribute with the same alias as parent doesn't issue a deprecation" do
+    ParentWithAlias.new # eagerly generate parents alias methods
+    obj = assert_not_deprecated(ActiveRecord.deprecator) do
+      ChildWithAnAliasFromAbstractClass.new
+    end
+    obj.title = "hey"
+    assert_equal("hey", obj.parents_subject)
+  end
+
+  test "#alias_attribute method on an abstract class is available on subclasses" do
+    superclass = Class.new(ActiveRecord::Base) do
+      self.abstract_class = true
+      alias_attribute :id_value, :id
+    end
+    subclass = Class.new(superclass) { self.table_name = "topics" }
+
+    object = subclass.build(id: 123_456)
+
+    assert_equal 123_456, object.id_value
+  end
+
+  test "#alias_attribute with an _in_database method issues raises an error" do
+    class_with_generated_attribute_method_target = Class.new(ActiveRecord::Base) do
+      def self.name
+        "ClassWithGeneratedAttributeMethodTarget"
+      end
+
+      self.table_name = "topics"
+
+      alias_attribute :saved_title, :title_in_database
+    end
+
+    message = <<~MESSAGE.squish
+      ClassWithGeneratedAttributeMethodTarget model aliases
+      `title_in_database`, but `title_in_database` is not an attribute.
+      Use `alias_method :saved_title, :title_in_database` or define the method manually.
+    MESSAGE
+
+    error = assert_raises(ArgumentError) do
+      class_with_generated_attribute_method_target.new
+    end
+
+    assert_equal message, error.message
+  end
+
+  test "#alias_attribute with enum method raises an error" do
+    class_with_enum_method_target = Class.new(ActiveRecord::Base) do
+      def self.name
+        "ClassWithEnumMethodTarget"
+      end
+
+      self.table_name = "books"
+
+      attribute :status, :string
+
+      enum :status, {
+        pending: "0",
+        completed: "1",
+      }
+      alias_attribute :is_pending?, :pending?
+    end
+
+    message = <<~MESSAGE.squish
+      ClassWithEnumMethodTarget model aliases `pending?`, but `pending?` is not an attribute. Use `alias_method :is_pending?, :pending?` or define the method manually.
+    MESSAGE
+
+    error = assert_raises(ArgumentError) do
+      class_with_enum_method_target.new
+    end
+    assert_equal message, error.message
+  end
+
+  test "#alias_attribute with an association method raises an error" do
+    class_with_association_target = Class.new(ActiveRecord::Base) do
+      def self.name
+        "ClassWithAssociationTarget"
+      end
+
+      self.table_name = "books"
+
+      belongs_to :author
+
+      alias_attribute :written_by, :author
+    end
+
+    message = <<~MESSAGE.squish
+      ClassWithAssociationTarget model aliases `author`, but `author` is not an attribute. Use `alias_method :written_by, :author` or define the method manually.
+    MESSAGE
+
+    error = assert_raises(ArgumentError) do
+      class_with_association_target.new
+    end
+    assert_equal message, error.message
+  end
+
+  test "#alias_attribute method on a STI class is available on subclasses" do
+    superclass = Class.new(ActiveRecord::Base) do
+      self.table_name = "comments"
+      alias_attribute :text, :body
+    end
+
+    subclass = Class.new(superclass) do
+      self.abstract_class = true
+    end
+
+    subsubclass = Class.new(subclass)
+
+    comment = subsubclass.build(body: "Text")
+    assert_equal "Text", comment.text
+  end
+
+  test "#alias_attribute with a manually defined method raises an error" do
+    class_with_aliased_manually_defined_method = Class.new(ActiveRecord::Base) do
+      def self.name
+        "ClassWithAliasedManuallyDefinedMethod"
+      end
+
+      self.table_name = "books"
+
+      alias_attribute :print, :publish
+
+      def publish
+        "Publishing!"
+      end
+    end
+
+    message = <<~MESSAGE.squish
+      ClassWithAliasedManuallyDefinedMethod model aliases `publish`, but `publish` is not an attribute.
+      Use `alias_method :print, :publish` or define the method manually.
+    MESSAGE
+
+    error = assert_raises(ArgumentError) do
+      class_with_aliased_manually_defined_method.new
+    end
+    assert_equal message, error.message
   end
 
   private

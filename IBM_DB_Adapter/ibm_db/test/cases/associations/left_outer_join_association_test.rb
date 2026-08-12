@@ -9,6 +9,9 @@ require "models/essay"
 require "models/category"
 require "models/categorization"
 require "models/person"
+require "models/friendship"
+require "models/reference"
+require "models/job"
 
 class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
   fixtures :authors, :author_addresses, :essays, :posts, :comments, :ratings, :categorizations, :people
@@ -22,8 +25,8 @@ class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
   end
 
   def test_construct_finder_sql_applies_aliases_tables_on_association_conditions
-    result = Author.left_outer_joins(:thinking_posts, :welcome_posts).to_a
-    assert_equal authors(:david), result.first
+    result = Author.left_outer_joins(:thinking_posts, :welcome_posts).first
+    assert_equal authors(:david), result
   end
 
   def test_construct_finder_sql_does_not_table_name_collide_on_duplicate_associations
@@ -94,7 +97,7 @@ class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
 
   def test_join_conditions_added_to_join_clause
     queries = capture_sql { Author.left_outer_joins(:essays).to_a }
-    assert queries.any? { |sql| /writer_type.*?=.*?(Author|\?|\$1|\:a1)/i.match?(sql) }
+    assert queries.any? { |sql| /writer_type.*?=.*?(Author|\?|\$1|:a1)/i.match?(sql) }
     assert queries.none? { |sql| /WHERE/i.match?(sql) }
   end
 
@@ -119,5 +122,13 @@ class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
     author.categorizations.create! special: true
 
     assert_equal [author], Author.where(id: author).left_outer_joins(:special_categorizations)
+  end
+
+  def test_left_outer_joins_includes_all_nested_associations
+    sql, = capture_sql { Friendship.left_outer_joins(:friend_favorite_reference_job, :follower_favorite_reference_job).to_a }
+
+    # DB2 doesn't quote composite identifiers in JOIN conditions
+    assert_match %r(friendships\.friend_id)i, sql
+    assert_match %r(friendships\.follower_id)i, sql
   end
 end

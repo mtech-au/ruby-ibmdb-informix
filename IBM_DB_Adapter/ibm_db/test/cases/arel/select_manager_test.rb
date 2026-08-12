@@ -338,13 +338,13 @@ module Arel
         replies            = Table.new(:replies)
         replies_id         = replies[:id]
 
-        recursive_term = Arel::SelectManager.new
-        recursive_term.from(comments).project(comments_id, comments_parent_id).where(comments_id.eq 42)
-
         non_recursive_term = Arel::SelectManager.new
-        non_recursive_term.from(comments).project(comments_id, comments_parent_id).join(replies).on(comments_parent_id.eq replies_id)
+        non_recursive_term.from(comments).project(comments_id, comments_parent_id).where(comments_id.eq 42)
 
-        union = recursive_term.union(non_recursive_term)
+        recursive_term = Arel::SelectManager.new
+        recursive_term.from(comments).project(comments_id, comments_parent_id).join(replies).on(comments_parent_id.eq replies_id)
+
+        union = non_recursive_term.union(recursive_term)
 
         as_statement = Arel::Nodes::As.new replies, union
 
@@ -963,16 +963,16 @@ module Arel
         _(manager.where_sql).must_be_like %{ WHERE "users"."id" = 10 AND "users"."id" = 11}
       end
 
-      it "handles database specific statements" do
-        old_visitor = Table.engine.connection.visitor
-        Table.engine.connection.visitor = Visitors::PostgreSQL.new Table.engine.connection
+      it "handles database-specific statements" do
+        old_visitor = Table.engine.lease_connection.visitor
+        Table.engine.lease_connection.visitor = Visitors::PostgreSQL.new Table.engine.lease_connection
         table   = Table.new :users
         manager = Arel::SelectManager.new
         manager.from table
         manager.where table[:id].eq 10
         manager.where table[:name].matches "foo%"
         _(manager.where_sql).must_be_like %{ WHERE "users"."id" = 10 AND "users"."name" ILIKE 'foo%' }
-        Table.engine.connection.visitor = old_visitor
+        Table.engine.lease_connection.visitor = old_visitor
       end
 
       it "returns nil when there are no wheres" do
@@ -1014,7 +1014,7 @@ module Arel
 
         _(stmt.to_sql).must_be_like %{
           UPDATE "users" SET foo = bar
-          WHERE "users"."id" IN (SELECT "users"."id" FROM "users" LIMIT 1)
+          WHERE ("users"."id") IN (SELECT "users"."id" FROM "users" LIMIT 1)
         }
       end
 
@@ -1028,7 +1028,7 @@ module Arel
 
         _(stmt.to_sql).must_be_like %{
           UPDATE "users" SET foo = bar
-          WHERE "users"."id" IN (SELECT "users"."id" FROM "users" ORDER BY foo)
+          WHERE ("users"."id") IN (SELECT "users"."id" FROM "users" ORDER BY foo)
         }
       end
 
@@ -1053,7 +1053,7 @@ module Arel
         stmt = manager.compile_update({ table[:id] => 1 }, Arel::Attributes::Attribute.new(table, "id"))
 
         _(stmt.to_sql).must_be_like %{
-          UPDATE "users" SET "id" = 1 WHERE "users"."id" IN (SELECT "users"."id" FROM "users" WHERE "users"."foo" = 10 LIMIT 42)
+          UPDATE "users" SET "id" = 1 WHERE ("users"."id") IN (SELECT "users"."id" FROM "users" WHERE "users"."foo" = 10 LIMIT 42)
         }
       end
     end

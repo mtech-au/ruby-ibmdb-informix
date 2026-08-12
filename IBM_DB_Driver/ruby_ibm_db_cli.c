@@ -398,9 +398,10 @@ int _ruby_ibm_db_SQLCreateDB_helper(create_drop_db_args *data) {
 #ifndef UNICODE_SUPPORT_VERSION_H
   #ifdef _WIN32
     HINSTANCE cliLib = NULL;
-    FARPROC sqlcreatedb;
+    typedef int (*sqlcreatedbType)( SQLHDBC, SQLCHAR *, SQLINTEGER, SQLCHAR *, SQLINTEGER, SQLCHAR *, SQLINTEGER );
+    sqlcreatedbType sqlcreatedb;
     cliLib = DLOPEN( LIBDB2 );
-    sqlcreatedb =  DLSYM( cliLib, "SQLCreateDb" );
+    sqlcreatedb = (sqlcreatedbType) DLSYM( cliLib, "SQLCreateDb" );
   #elif _AIX
     void *cliLib = NULL;
     typedef int (*sqlcreatedbType)( SQLHDBC, SQLCHAR *, SQLINTEGER, SQLCHAR *, SQLINTEGER, SQLCHAR *, SQLINTEGER );
@@ -418,9 +419,10 @@ int _ruby_ibm_db_SQLCreateDB_helper(create_drop_db_args *data) {
 #else
   #ifdef _WIN32
     HINSTANCE cliLib = NULL;
-    FARPROC sqlcreatedb;
+    typedef int (*sqlcreatedbType)( SQLHDBC, SQLWCHAR *, SQLINTEGER, SQLWCHAR *, SQLINTEGER, SQLWCHAR *, SQLINTEGER );
+    sqlcreatedbType sqlcreatedb;
     cliLib = DLOPEN( LIBDB2 );
-    sqlcreatedb =  DLSYM( cliLib, "SQLCreateDbW" );
+    sqlcreatedb = (sqlcreatedbType) DLSYM( cliLib, "SQLCreateDbW" );
   #elif _AIX
     void *cliLib = NULL;
     typedef int (*sqlcreatedbType)( SQLHDBC, SQLWCHAR *, SQLINTEGER, SQLWCHAR *, SQLINTEGER, SQLWCHAR *, SQLINTEGER );
@@ -437,7 +439,7 @@ int _ruby_ibm_db_SQLCreateDB_helper(create_drop_db_args *data) {
   #endif
 #endif
 
-  rc = (*sqlcreatedb)( (SQLHSTMT) data->conn_res->hdbc, data->dbName, (SQLINTEGER)data->dbName_string_len, 
+  rc = (*sqlcreatedb)( (SQLHDBC) data->conn_res->hdbc, data->dbName, (SQLINTEGER)data->dbName_string_len, 
                             data->codeSet, (SQLINTEGER)data->codeSet_string_len,
 							data->mode, (SQLINTEGER)data->mode_string_len );
   data->rc =rc;							
@@ -453,9 +455,10 @@ int _ruby_ibm_db_SQLDropDB_helper(create_drop_db_args *data) {
 #ifndef UNICODE_SUPPORT_VERSION_H
   #ifdef _WIN32
     HINSTANCE cliLib = NULL;
-    FARPROC sqldropdb;
+    typedef int (*sqldropdbType)( SQLHDBC, SQLCHAR *, SQLINTEGER );
+    sqldropdbType sqldropdb;
     cliLib = DLOPEN( LIBDB2 );
-    sqldropdb =  DLSYM( cliLib, "SQLDropDb" );
+    sqldropdb = (sqldropdbType) DLSYM( cliLib, "SQLDropDb" );
   #elif _AIX
     void *cliLib = NULL;
     typedef int (*sqldropdbType)( SQLHDBC, SQLCHAR *, SQLINTEGER);
@@ -473,9 +476,10 @@ int _ruby_ibm_db_SQLDropDB_helper(create_drop_db_args *data) {
 #else
   #ifdef _WIN32
     HINSTANCE cliLib = NULL;
-    FARPROC sqldropdb;
+    typedef int (*sqldropdbType)( SQLHDBC, SQLWCHAR *, SQLINTEGER );
+    sqldropdbType sqldropdb;
     cliLib = DLOPEN( LIBDB2 );
-    sqldropdb =  DLSYM( cliLib, "SQLDropDbW" );
+    sqldropdb = (sqldropdbType) DLSYM( cliLib, "SQLDropDbW" );
   #elif _AIX
     void *cliLib = NULL;
     typedef int (*sqldropdbType)( SQLHDBC, SQLWCHAR *, SQLINTEGER);
@@ -492,7 +496,7 @@ int _ruby_ibm_db_SQLDropDB_helper(create_drop_db_args *data) {
   #endif
 #endif
 
-  rc = (*sqldropdb)( (SQLHSTMT) data->conn_res->hdbc, data->dbName, (SQLINTEGER)data->dbName_string_len );
+  rc = (*sqldropdb)( (SQLHDBC) data->conn_res->hdbc, data->dbName, (SQLINTEGER)data->dbName_string_len );
 
   data->rc = rc;
   DLCLOSE( cliLib );
