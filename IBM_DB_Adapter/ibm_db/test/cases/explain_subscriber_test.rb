@@ -4,7 +4,7 @@ require "cases/helper"
 require "active_record/explain_subscriber"
 require "active_record/explain_registry"
 
-if ActiveRecord::Base.connection.supports_explain?
+if ActiveRecord::Base.lease_connection.supports_explain?
   class ExplainSubscriberTest < ActiveRecord::TestCase
     SUBSCRIBER = ActiveRecord::ExplainSubscriber.new
 
@@ -52,6 +52,11 @@ if ActiveRecord::Base.connection.supports_explain?
 
     def test_collects_cte_queries
       SUBSCRIBER.finish(nil, nil, name: "SQL", sql: "with s as (values(3)) select 1 from s")
+      assert_equal 1, queries.size
+    end
+
+    def test_collects_queries_starting_with_comment
+      SUBSCRIBER.finish(nil, nil, name: "SQL", sql: "/* comment */ select 1 from users")
       assert_equal 1, queries.size
     end
 

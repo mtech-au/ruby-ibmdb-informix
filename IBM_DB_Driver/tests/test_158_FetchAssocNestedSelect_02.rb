@@ -20,10 +20,13 @@ class TestIbmDb < Test::Unit::TestCase
       
       while (row = IBM_DB::fetch_assoc(result))
 
-        print row['ID'].nil? ? 'nil':row['ID'] , ", " , row['NAME'].nil? ? 'nil':row['NAME'] , ", " ,
-              row['DEPT'].nil? ? 'nil':row['DEPT'] , ", " , row['JOB'].nil? ? 'nil':row['JOB'] , ", " ,
-              row['YEARS'].nil? ? 'nil':row['YEARS'] , ", " , row['SALARY'].nil? ? 'nil':row['SALARY'] , ", " ,
-              row['COMM'].nil? ? 'nil':row['COMM']
+          salary = row['SALARY']
+          comm = row['COMM']
+
+          print row['ID'].nil? ? 'nil':row['ID'] , ", " , row['NAME'].nil? ? 'nil':row['NAME'] , ", " ,
+            row['DEPT'].nil? ? 'nil':row['DEPT'] , ", " , row['JOB'].nil? ? 'nil':row['JOB'] , ", " ,
+            row['YEARS'].nil? ? 'nil':row['YEARS'] , ", " , salary.nil? ? 'nil':salary.inspect , ", " ,
+            comm.nil? ? 'nil':comm.inspect
 
         result2 = IBM_DB::exec conn,"SELECT * FROM department WHERE substr(deptno,1,1) in ('A','B','C','D','E')"
 
@@ -33,11 +36,11 @@ class TestIbmDb < Test::Unit::TestCase
                row2['MGRNO'].nil? ? 'nil':row2['MGRNO'] , ", " , row2['ADMRDEPT'].nil? ? 'nil':row2['ADMRDEPT'] , ", " ,
                row2['LOCATION'].nil? ? 'nil':row2['LOCATION']
 
-         result3 = IBM_DB::exec conn,"SELECT * FROM employee WHERE lastname IN ('HAAS','THOMPSON', 'KWAN', 'GEYER', 'STERN', 'PULASKI', 'HENDERSON', 'SPENSER', 'LUCCHESSI', 'OCONNELL', 'QUINTANA', 'NICHOLLS', 'ADAMSON', 'PIANKA', 'YOSHIMURA', 'SCOUTTEN', 'WALKER', 'BROWN', 'JONES', 'LUTZ', 'JEFFERSON', 'MARINO', 'SMITH', 'JOHNSON', 'PEREZ', 'SCHNEIDER', 'PARKER', 'SMITH', 'SETRIGHT', 'MEHTA', 'LEE', 'GOUNOT')"
+         result3 = IBM_DB::exec conn,"SELECT empno, lastname, phoneno FROM employee WHERE lastname IN ('HAAS','THOMPSON', 'KWAN', 'GEYER', 'STERN', 'PULASKI', 'HENDERSON', 'SPENSER', 'LUCCHESSI', 'OCONNELL', 'QUINTANA', 'NICHOLLS', 'ADAMSON', 'PIANKA', 'YOSHIMURA', 'SCOUTTEN', 'WALKER', 'BROWN', 'JONES', 'LUTZ', 'JEFFERSON', 'MARINO', 'SMITH', 'JOHNSON', 'PEREZ', 'SCHNEIDER', 'PARKER', 'SMITH', 'SETRIGHT', 'MEHTA', 'LEE', 'GOUNOT') ORDER BY empno"
 
-         while (row3=IBM_DB::fetch_array(result3))
-           print row3[0].nil? ? 'nil':row3[0] , ", " , row3[3].nil? ? 'nil':row3[3] , ", " ,
-                 row3[5].nil? ? 'nil':row3[5]
+         while (row3 = IBM_DB::fetch_assoc(result3))
+           print row3['EMPNO'].nil? ? 'nil':row3['EMPNO'] , ", " , row3['LASTNAME'].nil? ? 'nil':row3['LASTNAME'] , ", " ,
+                 row3['PHONENO'].nil? ? 'nil':row3['PHONENO']
          end
         end
       end

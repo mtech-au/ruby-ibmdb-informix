@@ -27,6 +27,10 @@
 #include "ruby_ibm_db_cli.h"
 #include "ruby_ibm_db.h"
 #include <ctype.h>
+#ifdef _AIX
+#include <signal.h>
+#include <unistd.h>
+#endif
 
 #include <ruby/thread.h>
 #include <ruby/version.h>
@@ -52,11 +56,56 @@ static int  createDbSupported, dropDbSupported; /*1 == TRUE; 0 == FALSE*/
    non-string VALUE (e.g. Qnil) would crash the interpreter. */
 static void _ruby_ibm_db_throw_error( VALUE error ) {
   if ( TYPE(error) == T_STRING ) {
-    _ruby_ibm_db_throw_error( error );
+    rb_throw( RSTRING_PTR(error), Qnil );
   } else {
     rb_throw( "<error message could not be retrieved>", Qnil );
   }
 }
+
+#ifdef _AIX
+/*
+  C-only AIX fallback for GSKit v9.x SSL failures.
+
+  On AIX, GSKit v9.x can abort the process from an internal thread when SSL
+  handshake fails.  In the Ruby driver we cannot install a C++ terminate
+  handler from a traditional .c extension file without changing the long-
+  standing build model.  Instead, install a SIGABRT handler in pure C so the
+  process exits cleanly with a clear diagnostic instead of generating a core
+  dump.
+*/
+static void _ruby_ibm_db_aix_sigabrt_handler(int sig)
+{
+  (void)sig;
+
+#define WR(msg) write(STDERR_FILENO, msg, sizeof(msg) - 1)
+
+  WR("\n");
+  WR("[ibm_db] ERROR: SIGABRT received - GSKit v9.x SSL connection failed.\n");
+  WR("\n");
+  WR("[ibm_db] This is a known incompatibility between GSKit v9.x (compiled with IBM XLC)\n");
+  WR("[ibm_db] and GCC-compiled runtimes/extensions on AIX, including the ibm_db Ruby gem.\n");
+  WR("[ibm_db] GSKit v9 throws C++ exceptions from internal threads using XLC's exception\n");
+  WR("[ibm_db] handling ABI, which is incompatible with GCC's libstdc++ runtime.\n");
+  WR("\n");
+  WR("[ibm_db] SOLUTION: Use a Db2 CLI driver (clidriver) that includes GSKit v8.x\n");
+  WR("[ibm_db] instead of GSKit v9.x. GSKit v8.x does not have this incompatibility.\n");
+  WR("\n");
+  WR("[ibm_db] Db2 client from version 12.1.5.0 onwards ships with GSKit v9.x.\n");
+  WR("[ibm_db] Use a clidriver older than v12.1.5.0 to avoid this issue.\n");
+  WR("\n");
+  WR("[ibm_db] To check your GSKit version:\n");
+  WR("[ibm_db]   ls $IBM_DB_HOME/lib/icc/libgsk*.so\n");
+  WR("[ibm_db]   - libgsk8*.so = GSKit v8 (compatible)\n");
+  WR("[ibm_db]   - libgsk9*.so = GSKit v9 (incompatible)\n");
+  WR("\n");
+  WR("[ibm_db] Exiting without core dump.\n");
+  WR("\n");
+
+#undef WR
+
+  _exit(1);
+}
+#endif
 
 /* Strucure holding the necessary data to be passed to bind the list of elements passed to the execute function*/
 typedef struct _stmt_bind_data_array {
@@ -208,6 +257,17 @@ static VALUE id_id2name;
 /*  Every user visible function must have an entry in Init_ibm_db
 */
 void Init_ibm_db(void) {
+
+#ifdef _AIX
+  {
+    struct sigaction sa_abrt;
+    memset(&sa_abrt, '\0', sizeof(sa_abrt));
+    sa_abrt.sa_handler = _ruby_ibm_db_aix_sigabrt_handler;
+    sigemptyset(&sa_abrt.sa_mask);
+    sa_abrt.sa_flags = 0;
+    sigaction(SIGABRT, &sa_abrt, NULL);
+  }
+#endif
 	
   mDB = rb_define_module("IBM_DB");
 

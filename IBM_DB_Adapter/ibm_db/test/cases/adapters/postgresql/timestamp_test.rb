@@ -10,7 +10,7 @@ class PostgresqlTimestampTest < ActiveRecord::PostgreSQLTestCase
   self.use_transactional_tests = false
 
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
     @connection.execute("INSERT INTO postgresql_timestamp_with_zones (id, time) VALUES (1, '2010-01-01 10:00:00-1')")
   end
 
@@ -18,7 +18,7 @@ class PostgresqlTimestampTest < ActiveRecord::PostgreSQLTestCase
     PostgresqlTimestampWithZone.delete_all
   end
 
-  def test_timestamp_with_zone_values_with_rails_time_zone_support
+  def test_timestamp_with_zone_values_with_rails_time_zone_support_and_no_time_zone_set
     with_timezone_config default: :utc, aware_attributes: true do
       @connection.reconnect!
 
@@ -45,6 +45,78 @@ class PostgresqlTimestampTest < ActiveRecord::PostgreSQLTestCase
   end
 end
 
+class PostgresqlTimestampWithAwareTypesTest < ActiveRecord::PostgreSQLTestCase
+  class PostgresqlTimestampWithZone < ActiveRecord::Base; end
+
+  self.use_transactional_tests = false
+
+  setup do
+    @connection = ActiveRecord::Base.lease_connection
+    @connection.execute("INSERT INTO postgresql_timestamp_with_zones (id, time) VALUES (1, '2010-01-01 10:00:00-1')")
+  end
+
+  teardown do
+    PostgresqlTimestampWithZone.delete_all
+  end
+
+  def test_timestamp_with_zone_values_with_rails_time_zone_support_and_time_zone_set
+    with_timezone_config default: :utc, aware_attributes: true, zone: "Pacific Time (US & Canada)", aware_types: [:timestamptz, :datetime, :time] do
+      @connection.reconnect!
+
+      timestamp = PostgresqlTimestampWithZone.find(1)
+      assert_equal Time.utc(2010, 1, 1, 11, 0, 0), timestamp.time
+      assert_instance_of ActiveSupport::TimeWithZone, timestamp.time
+    end
+  ensure
+    @connection.reconnect!
+  end
+end
+
+class PostgresqlTimestampWithTimeZoneTest < ActiveRecord::PostgreSQLTestCase
+  class PostgresqlTimestampWithZone < ActiveRecord::Base; end
+
+  self.use_transactional_tests = false
+
+  setup do
+    with_postgresql_datetime_type(:timestamptz) do
+      @connection = ActiveRecord::Base.lease_connection
+      @connection.execute("INSERT INTO postgresql_timestamp_with_zones (id, time) VALUES (1, '2010-01-01 10:00:00-1')")
+    end
+  end
+
+  teardown do
+    PostgresqlTimestampWithZone.delete_all
+  end
+
+  def test_timestamp_with_zone_values_with_rails_time_zone_support_and_timestamptz_and_no_time_zone_set
+    with_postgresql_datetime_type(:timestamptz) do
+      with_timezone_config default: :utc, aware_attributes: true, aware_types: [:timestamptz, :datetime, :time] do
+        @connection.reconnect!
+
+        timestamp = PostgresqlTimestampWithZone.find(1)
+        assert_equal Time.utc(2010, 1, 1, 11, 0, 0), timestamp.time
+        assert_instance_of Time, timestamp.time
+      end
+    end
+  ensure
+    @connection.reconnect!
+  end
+
+  def test_timestamp_with_zone_values_with_rails_time_zone_support_and_timestamptz_and_time_zone_set
+    with_postgresql_datetime_type(:timestamptz) do
+      with_timezone_config default: :utc, aware_attributes: true, zone: "Pacific Time (US & Canada)", aware_types: [:timestamptz, :datetime, :time] do
+        @connection.reconnect!
+
+        timestamp = PostgresqlTimestampWithZone.find(1)
+        assert_equal Time.utc(2010, 1, 1, 11, 0, 0), timestamp.time
+        assert_instance_of ActiveSupport::TimeWithZone, timestamp.time
+      end
+    end
+  ensure
+    @connection.reconnect!
+  end
+end
+
 class PostgresqlTimestampFixtureTest < ActiveRecord::PostgreSQLTestCase
   fixtures :topics
 
@@ -56,11 +128,11 @@ class PostgresqlTimestampFixtureTest < ActiveRecord::PostgreSQLTestCase
 
   def test_load_infinity_and_beyond
     d = Developer.find_by_sql("select 'infinity'::timestamp as legacy_updated_at")
-    assert d.first.updated_at.infinite?, "timestamp should be infinite"
+    assert_predicate d.first.updated_at, :infinite?, "timestamp should be infinite"
 
     d = Developer.find_by_sql("select '-infinity'::timestamp as legacy_updated_at")
     time = d.first.updated_at
-    assert time.infinite?, "timestamp should be infinite"
+    assert_predicate time, :infinite?, "timestamp should be infinite"
     assert_operator time, :<, 0
   end
 
@@ -73,7 +145,7 @@ class PostgresqlTimestampFixtureTest < ActiveRecord::PostgreSQLTestCase
   end
 
   def test_bc_timestamp
-    date = Date.new(0) - 1.week
+    date = Time.new(0) - 1.week
     Developer.create!(name: "aaron", updated_at: date)
     assert_equal date, Developer.find_by_name("aaron").updated_at
   end
@@ -88,5 +160,50 @@ class PostgresqlTimestampFixtureTest < ActiveRecord::PostgreSQLTestCase
     date = Time.utc(0, 4, 7)
     Developer.create!(name: "yahagi", updated_at: date)
     assert_equal date, Developer.find_by_name("yahagi").updated_at
+  end
+end
+
+class PostgresqlTimestampMigrationTest < ActiveRecord::PostgreSQLTestCase
+  class PostgresqlTimestampWithZone < ActiveRecord::Base; end
+
+  def test_adds_column_as_timestamp
+    original, $stdout = $stdout, StringIO.new
+
+    ActiveRecord::Migration.new.add_column :postgresql_timestamp_with_zones, :times, :datetime
+
+    assert_equal({ "data_type" => "timestamp without time zone" },
+                 PostgresqlTimestampWithZone.lease_connection.execute("select data_type from information_schema.columns where column_name = 'times'").to_a.first)
+  ensure
+    $stdout = original
+  end
+
+  def test_adds_column_as_timestamptz_if_datetime_type_changed
+    original, $stdout = $stdout, StringIO.new
+
+    with_postgresql_datetime_type(:timestamptz) do
+      ActiveRecord::Migration.new.add_column :postgresql_timestamp_with_zones, :times, :datetime
+
+      assert_equal({ "data_type" => "timestamp with time zone" },
+                   PostgresqlTimestampWithZone.lease_connection.execute("select data_type from information_schema.columns where column_name = 'times'").to_a.first)
+    end
+  ensure
+    $stdout = original
+  end
+
+  def test_adds_column_as_custom_type
+    original, $stdout = $stdout, StringIO.new
+
+    PostgresqlTimestampWithZone.lease_connection.execute("CREATE TYPE custom_time_format AS ENUM ('past', 'present', 'future');")
+
+    ActiveRecord::ConnectionAdapters::PostgreSQLAdapter::NATIVE_DATABASE_TYPES[:datetimes_as_enum] = { name: "custom_time_format" }
+    with_postgresql_datetime_type(:datetimes_as_enum) do
+      ActiveRecord::Migration.new.add_column :postgresql_timestamp_with_zones, :times, :datetime, precision: nil
+
+      assert_equal({ "data_type" => "USER-DEFINED", "udt_name" => "custom_time_format" },
+                   PostgresqlTimestampWithZone.lease_connection.execute("select data_type, udt_name from information_schema.columns where column_name = 'times'").to_a.first)
+    end
+  ensure
+    ActiveRecord::ConnectionAdapters::PostgreSQLAdapter::NATIVE_DATABASE_TYPES.delete(:datetimes_as_enum)
+    $stdout = original
   end
 end

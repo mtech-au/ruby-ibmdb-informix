@@ -26,8 +26,8 @@ module ActiveRecord
         @management = middleware(@app)
 
         # make sure we have an active connection
-        assert ActiveRecord::Base.connection
-        assert_predicate ActiveRecord::Base.connection_handler, :active_connections?
+        assert ActiveRecord::Base.lease_connection
+        assert ActiveRecord::Base.connection_handler.active_connections?(:all)
       end
 
       def test_app_delegation
@@ -47,14 +47,27 @@ module ActiveRecord
       def test_connections_are_cleared_after_body_close
         _, _, body = @management.call(@env)
         body.close
-        assert_not_predicate ActiveRecord::Base.connection_handler, :active_connections?
+        assert_not ActiveRecord::Base.connection_handler.active_connections?(:all)
+      end
+
+      test "connections are cleared even if inside a non-joinable transaction" do
+        ActiveRecord::Base.connection_pool.pin_connection!(Thread.current)
+        Thread.new do
+          assert ActiveRecord::Base.lease_connection
+          assert ActiveRecord::Base.connection_handler.active_connections?(:all)
+          _, _, body = @management.call(@env)
+          body.close
+          assert_not ActiveRecord::Base.connection_handler.active_connections?(:all)
+        end.join
+      ensure
+        ActiveRecord::Base.connection_pool.unpin_connection!
       end
 
       def test_active_connections_are_not_cleared_on_body_close_during_transaction
         ActiveRecord::Base.transaction do
           _, _, body = @management.call(@env)
           body.close
-          assert_predicate ActiveRecord::Base.connection_handler, :active_connections?
+          assert ActiveRecord::Base.connection_handler.active_connections?(:all)
         end
       end
 
@@ -62,7 +75,7 @@ module ActiveRecord
         app       = Class.new(App) { def call(env); raise NotImplementedError; end }.new
         explosive = middleware(app)
         assert_raises(NotImplementedError) { explosive.call(@env) }
-        assert_not_predicate ActiveRecord::Base.connection_handler, :active_connections?
+        assert_not ActiveRecord::Base.connection_handler.active_connections?(:all)
       end
 
       def test_connections_not_closed_if_exception_inside_transaction
@@ -70,14 +83,36 @@ module ActiveRecord
           app               = Class.new(App) { def call(env); raise RuntimeError; end }.new
           explosive         = middleware(app)
           assert_raises(RuntimeError) { explosive.call(@env) }
-          assert_predicate ActiveRecord::Base.connection_handler, :active_connections?
+          assert ActiveRecord::Base.connection_handler.active_connections?(:all)
+        end
+      end
+
+      test "cancel asynchronous queries if an exception is raised" do
+        unless ActiveRecord::Base.lease_connection.supports_concurrent_connections?
+          skip "This adapter doesn't support asynchronous queries"
+        end
+
+        app = Class.new(App) do
+          attr_reader :future_result
+
+          def call(env)
+            @future_result = ActiveRecord::Base.lease_connection.select_all("SELECT * FROM does_not_exists", async: true)
+            raise NotImplementedError
+          end
+        end.new
+
+        explosive = middleware(app)
+        assert_raises(NotImplementedError) { explosive.call(@env) }
+
+        assert_raises FutureResult::Canceled do
+          app.future_result.to_a
         end
       end
 
       test "doesn't clear active connections when running in a test case" do
         executor.wrap do
           @management.call(@env)
-          assert_predicate ActiveRecord::Base.connection_handler, :active_connections?
+          assert ActiveRecord::Base.connection_handler.active_connections?(:all)
         end
       end
 
@@ -100,6 +135,8 @@ module ActiveRecord
         def executor
           @executor ||= Class.new(ActiveSupport::Executor).tap do |exe|
             ActiveRecord::QueryCache.install_executor_hooks(exe)
+            ActiveRecord::AsynchronousQueriesTracker.install_executor_hooks(exe)
+            ActiveRecord::ConnectionAdapters::ConnectionPool.install_executor_hooks(exe)
           end
         end
 

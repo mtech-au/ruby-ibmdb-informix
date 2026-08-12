@@ -7,10 +7,10 @@ module ActiveRecord
     class ReferencesStatementsTest < ActiveRecord::TestCase
       include ActiveRecord::Migration::TestHelper
 
-      self.use_transactional_tests = false
-
       def setup
         super
+        connection.drop_table :testings, if_exists: true rescue nil
+        connection.drop_table :testing, if_exists: true rescue nil
         @table_name = :test_models
 
         add_column table_name, :supplier_id, :integer
@@ -20,6 +20,13 @@ module ActiveRecord
       def test_creates_reference_id_column
         add_reference table_name, :user
         assert column_exists?(table_name, :user_id, :integer)
+      end
+
+      def test_primary_key_and_references_columns_should_be_identical_type
+        add_reference table_name, :user
+        pk = connection.send(:column_for, :users, :id)
+        ref = connection.send(:column_for, table_name, :user_id)
+        assert_equal pk.sql_type, ref.sql_type
       end
 
       def test_does_not_create_reference_type_column
@@ -62,7 +69,8 @@ module ActiveRecord
 
       def test_does_not_share_options_with_reference_type_column
         add_reference table_name, :taggable, type: :integer, limit: 2, polymorphic: true
-        assert column_exists?(table_name, :taggable_id, :integer)
+          skip "DB2 always applies column size constraints to polymorphic type columns" if ENV['ARCONN'] == 'ibm_db'
+        assert column_exists?(table_name, :taggable_id, :integer, limit: 2)
         assert column_exists?(table_name, :taggable_type, :string)
         assert_not column_exists?(table_name, :taggable_type, :string, limit: 2)
       end
@@ -123,6 +131,22 @@ module ActiveRecord
       def test_remove_belongs_to_alias
         remove_belongs_to table_name, :supplier
         assert_not column_exists?(table_name, :supplier_id, :integer)
+      end
+
+      def test_responds_to_if_exists_option
+        with_polymorphic_column do
+          assert_nothing_raised do
+            remove_reference table_name, :nonexistent, polymorphic: true, if_exists: true
+          end
+        end
+      end
+
+      def test_responds_to_if_not_exists_option
+        with_polymorphic_column do
+          assert_nothing_raised do
+            add_reference table_name, :supplier, polymorphic: true, if_not_exists: true
+          end
+        end
       end
 
       private

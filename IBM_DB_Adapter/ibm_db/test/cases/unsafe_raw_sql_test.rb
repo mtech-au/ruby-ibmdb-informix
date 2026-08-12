@@ -74,8 +74,7 @@ class UnsafeRawSqlTest < ActiveRecord::TestCase
   test "order: allows quoted table and column names" do
     ids_expected = Post.order(Arel.sql("title")).pluck(:id)
 
-    quoted_title = Post.connection.quote_table_name("posts.title")
-    ids = Post.order(quoted_title).pluck(:id)
+    ids = Post.order(quote_table_name("posts.title")).pluck(:id)
 
     assert_equal ids_expected, ids
   end
@@ -166,12 +165,37 @@ class UnsafeRawSqlTest < ActiveRecord::TestCase
     assert_equal ids_expected, ids
   end
 
-  test "order: logs deprecation warning for unrecognized column" do
+  test "order: allows valid arguments with COLLATE" do
+    skip "IBM DB does not support column-level COLLATE in ORDER BY" if current_adapter?(:IBM_DBAdapter)
+
+    collation_name = {
+      "PostgreSQL" => "C",
+      "Mysql2" => "utf8mb4_bin",
+      "Trilogy" => "utf8mb4_bin",
+      "SQLite" => "binary"
+    }[ActiveRecord::Base.lease_connection.adapter_name]
+
+    ids_expected = Post.order(Arel.sql(%Q'author_id, title COLLATE "#{collation_name}" DESC')).pluck(:id)
+
+    ids = Post.order(["author_id", %Q'title COLLATE "#{collation_name}" DESC']).pluck(:id)
+
+    assert_equal ids_expected, ids
+  end
+
+  test "order: allows nested functions" do
+    ids_expected = Post.order(Arel.sql("author_id, length(trim(title))")).pluck(:id)
+
+    ids = Post.order("author_id, length(trim(title))").pluck(:id)
+
+    assert_equal ids_expected, ids
+  end
+
+  test "order: disallows dangerous query method" do
     e = assert_raises(ActiveRecord::UnknownAttributeReference) do
       Post.order("REPLACE(title, 'misc', 'zzzz')")
     end
 
-    assert_match(/Query method called with non-attribute argument\(s\):/, e.message)
+    assert_match(/Dangerous query method \(method whose arguments are used as raw SQL\) called with non-attribute argument\(s\):/, e.message)
   end
 
   test "pluck: allows string column name" do
@@ -233,10 +257,17 @@ class UnsafeRawSqlTest < ActiveRecord::TestCase
   test "pluck: allows quoted table and column names" do
     titles_expected = Post.pluck(Arel.sql("title"))
 
-    quoted_title = Post.connection.quote_table_name("posts.title")
-    titles = Post.pluck(quoted_title)
+    titles = Post.pluck(quote_table_name("posts.title"))
 
     assert_equal titles_expected, titles
+  end
+
+  test "pluck: allows nested functions" do
+    title_lengths_expected = Post.pluck(Arel.sql("length(trim(title))"))
+
+    title_lengths = Post.pluck("length(trim(title))")
+
+    assert_equal title_lengths_expected, title_lengths
   end
 
   test "pluck: disallows invalid column name" do
@@ -264,11 +295,11 @@ class UnsafeRawSqlTest < ActiveRecord::TestCase
     assert_equal excepted_values, values
   end
 
-  test "pluck: logs deprecation warning" do
+  test "pluck: disallows dangerous query method" do
     e = assert_raises(ActiveRecord::UnknownAttributeReference) do
       Post.includes(:comments).pluck(:title, "REPLACE(title, 'misc', 'zzzz')")
     end
 
-    assert_match(/Query method called with non-attribute argument\(s\):/, e.message)
+    assert_match(/Dangerous query method \(method whose arguments are used as raw SQL\) called with non-attribute argument\(s\):/, e.message)
   end
 end

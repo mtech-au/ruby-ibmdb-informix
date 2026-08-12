@@ -9,12 +9,6 @@ module Arel
     end
 
     it "should create join nodes" do
-      join = @relation.create_string_join "foo"
-      assert_kind_of Arel::Nodes::StringJoin, join
-      assert_equal "foo", join.left
-    end
-
-    it "should create join nodes" do
       join = @relation.create_join "foo", "bar"
       assert_kind_of Arel::Nodes::InnerJoin, join
       assert_equal "foo", join.left
@@ -40,13 +34,6 @@ module Arel
       assert_kind_of Arel::Nodes::RightOuterJoin, join
       assert_equal "foo", join.left
       assert_equal "bar", join.right
-    end
-
-    it "should return an insert manager" do
-      im = @relation.compile_insert "VALUES(NULL)"
-      assert_kind_of Arel::InsertManager, im
-      im.into Table.new(:users)
-      assert_equal "INSERT INTO \"users\" VALUES(NULL)", im.to_sql
     end
 
     describe "skip" do
@@ -134,6 +121,17 @@ module Arel
         rel = Table.new :users, as: "users"
         _(rel.table_alias).must_be_nil
       end
+
+      it "should accept literal SQL"  do
+        rel = Table.new Arel.sql("generate_series(4, 2)")
+        assert_equal Arel.sql("generate_series(4, 2)"), rel.name
+      end
+
+      it "should accept Arel nodes"  do
+        node = Arel::Nodes::NamedFunction.new("generate_series", [4, 2])
+        rel = Table.new node
+        assert_equal node, rel.name
+      end
     end
 
     describe "order" do
@@ -180,10 +178,6 @@ module Arel
       _(@relation.name).must_equal "users"
     end
 
-    it "should have a table name" do
-      _(@relation.table_name).must_equal "users"
-    end
-
     describe "[]" do
       describe "when given a Symbol" do
         it "manufactures an attribute if the symbol names an attribute within the relation" do
@@ -195,19 +189,15 @@ module Arel
 
     describe "equality" do
       it "is equal with equal ivars" do
-        relation1 = Table.new(:users)
-        relation1.table_alias = "zomg"
-        relation2 = Table.new(:users)
-        relation2.table_alias = "zomg"
+        relation1 = Table.new(:users, as: "zomg")
+        relation2 = Table.new(:users, as: "zomg")
         array = [relation1, relation2]
         assert_equal 1, array.uniq.size
       end
 
       it "is not equal with different ivars" do
-        relation1 = Table.new(:users)
-        relation1.table_alias = "zomg"
-        relation2 = Table.new(:users)
-        relation2.table_alias = "zomg2"
+        relation1 = Table.new(:users, as: "zomg")
+        relation2 = Table.new(:users, as: "zomg2")
         array = [relation1, relation2]
         assert_equal 2, array.uniq.size
       end

@@ -7,6 +7,8 @@
 class TestIbmDb < Test::Unit::TestCase
 
   def test_Bigint
+    omit "Windows prebuilt binary returns 32-bit BIGINT values" if RUBY_PLATFORM =~ /mingw|mswin/
+
     assert_expect do
       conn = IBM_DB.connect("DATABASE=#{database};HOSTNAME=#{hostname};PORT=#{port};UID=#{user};PWD=#{password}",'','')
       drop_table_sql = 'drop table table0'

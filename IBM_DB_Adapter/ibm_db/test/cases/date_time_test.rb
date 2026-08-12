@@ -7,6 +7,25 @@ require "models/task"
 class DateTimeTest < ActiveRecord::TestCase
   include InTimeZone
 
+  def test_default_timezone_validation
+    assert_raises ArgumentError do
+      ActiveRecord.default_timezone = "UTC"
+    end
+
+    # These values should not raise errors
+    ActiveRecord.default_timezone = :local
+    ActiveRecord.default_timezone = :utc
+  end
+
+  def test_high_precision_current_timestamp
+    current_timestamp = Task.with_connection { |conn| conn.high_precision_current_timestamp }
+
+    task = Task.create!
+    task = Task.select(current_timestamp => :starting).find(task.id)
+
+    assert_in_delta Time.now, task.starting, 1
+  end
+
   def test_saves_both_date_and_time
     with_env_tz "America/New_York" do
       with_timezone_config default: :utc do
@@ -62,7 +81,6 @@ class DateTimeTest < ActiveRecord::TestCase
   end
 
   def test_date_time_with_string_value_with_subsecond_precision
-    skip unless supports_datetime_with_precision?
     string_value = "2017-07-04 14:19:00.5"
     topic = Topic.create(written_on: string_value)
     assert_equal topic, Topic.find_by(written_on: string_value)

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/inflector"
+require "zeitwerk"
 require "cases/helper"
 require "models/author"
 require "models/company"
@@ -11,6 +13,7 @@ require "models/subscriber"
 require "models/vegetables"
 require "models/shop"
 require "models/sponsor"
+require "models/club"
 
 module InheritanceTestHelper
   def with_store_full_sti_class(&block)
@@ -43,14 +46,8 @@ class InheritanceTest < ActiveRecord::TestCase
   def test_class_with_blank_sti_name
     company = Company.first
     company = company.dup
-    company.extend(Module.new {
-      def _read_attribute(name)
-        return "  " if name == "type"
-        super
-      end
-    })
-    company.save!
-    company = Company.all.to_a.find { |x| x.id == company.id }
+    company.update!(type: "  ")
+    company = Company.find(company.id)
     assert_equal "  ", company.type
   end
 
@@ -73,37 +70,33 @@ class InheritanceTest < ActiveRecord::TestCase
   end
 
   def test_compute_type_no_method_error
-    ActiveSupport::Dependencies.stub(:safe_constantize, proc { raise NoMethodError }) do
-      assert_raises NoMethodError do
-        Company.send :compute_type, "InvalidModel"
-      end
-    end
+    # Done via autoload because you need the exception to happen when the file
+    # is required.
+    model = "RaisesNoMethodError"
+    Object.autoload(model, "#{MODELS_ROOT}/#{model.underscore}")
+    assert_raises(NoMethodError) { Company.send(:compute_type, model) }
+  ensure
+    Object.send(:remove_const, model)
   end
 
   def test_compute_type_on_undefined_method
-    error = nil
-    begin
-      Class.new(Author) do
-        alias_method :foo, :bar
-      end
-    rescue => e
-      error = e
-    end
-
-    ActiveSupport::Dependencies.stub(:safe_constantize, proc { raise e }) do
-      exception = assert_raises NameError do
-        Company.send :compute_type, "InvalidModel"
-      end
-      assert_equal error.message, exception.message
-    end
+    # Done via autoload because you need the exception to happen when the file
+    # is required.
+    model = "InvokesAnUndefinedMethod"
+    Object.autoload(model, "#{MODELS_ROOT}/#{model.underscore}")
+    assert_raises(NameError) { Company.send(:compute_type, model) }
+  ensure
+    Object.send(:remove_const, model)
   end
 
   def test_compute_type_argument_error
-    ActiveSupport::Dependencies.stub(:safe_constantize, proc { raise ArgumentError }) do
-      assert_raises ArgumentError do
-        Company.send :compute_type, "InvalidModel"
-      end
-    end
+    # Done via autoload because you need the exception to happen when the file
+    # is required.
+    model = "RaisesArgumentError"
+    Object.autoload(model, "#{MODELS_ROOT}/#{model.underscore}")
+    assert_raises(ArgumentError) { Company.send(:compute_type, model) }
+  ensure
+    Object.send(:remove_const, model)
   end
 
   def test_should_store_demodulized_class_name_with_store_full_sti_class_option_disabled
@@ -160,8 +153,8 @@ class InheritanceTest < ActiveRecord::TestCase
 
   def test_company_descends_from_active_record
     assert_not_predicate ActiveRecord::Base, :descends_from_active_record?
-    assert AbstractCompany.descends_from_active_record?, "AbstractCompany should descend from ActiveRecord::Base"
-    assert Company.descends_from_active_record?, "Company should descend from ActiveRecord::Base"
+    assert_predicate AbstractCompany, :descends_from_active_record?, "AbstractCompany should descend from ActiveRecord::Base"
+    assert_predicate Company, :descends_from_active_record?, "Company should descend from ActiveRecord::Base"
     assert_not Class.new(Company).descends_from_active_record?, "Company subclass should not descend from ActiveRecord::Base"
   end
 
@@ -196,12 +189,13 @@ class InheritanceTest < ActiveRecord::TestCase
   end
 
   def test_base_class_activerecord_error
-    klass = Class.new { include ActiveRecord::Inheritance }
-    assert_raise(ActiveRecord::ActiveRecordError) { klass.base_class }
+    assert_raise(ActiveRecord::ActiveRecordError) do
+      Class.new { include ActiveRecord::Inheritance }
+    end
   end
 
   def test_a_bad_type_column
-    Company.connection.insert "INSERT INTO companies (id, #{QUOTED_TYPE}, name) VALUES(100, 'bad_class!', 'Not happening')"
+    Company.lease_connection.insert "INSERT INTO companies (id, #{QUOTED_TYPE}, name) VALUES(100, 'bad_class!', 'Not happening')"
 
     assert_raise(ActiveRecord::SubclassNotFound) { Company.find(100) }
   end
@@ -382,13 +376,15 @@ class InheritanceTest < ActiveRecord::TestCase
 
   def test_new_with_autoload_paths
     path = File.expand_path("../models/autoloadable", __dir__)
-    ActiveSupport::Dependencies.autoload_paths << path
+    Zeitwerk.with_loader do |loader|
+      loader.push_dir(path)
+      loader.setup
 
-    firm = Company.new(type: "ExtraFirm")
-    assert_equal ExtraFirm, firm.class
-  ensure
-    ActiveSupport::Dependencies.autoload_paths.reject! { |p| p == path }
-    ActiveSupport::Dependencies.clear
+      firm = Company.new(type: "ExtraFirm")
+      assert_equal ExtraFirm, firm.class
+    ensure
+      loader.unload
+    end
   end
 
   def test_inheritance_condition
@@ -472,18 +468,17 @@ class InheritanceTest < ActiveRecord::TestCase
 
   def test_eager_load_belongs_to_something_inherited
     account = Account.all.merge!(includes: :firm).find(1)
-    assert account.association(:firm).loaded?, "association was not eager loaded"
+    assert_predicate account.association(:firm), :loaded?, "association was not eager loaded"
   end
 
   def test_alt_eager_loading
     cabbage = RedCabbage.all.merge!(includes: :seller).find(4)
-    assert cabbage.association(:seller).loaded?, "association was not eager loaded"
+    assert_predicate cabbage.association(:seller), :loaded?, "association was not eager loaded"
   end
 
   def test_eager_load_belongs_to_primary_key_quoting
-    c = Account.connection
     bind_param = Arel::Nodes::BindParam.new(nil)
-    assert_sql(/#{Regexp.escape(c.quote_table_name("companies.id"))} = (?:#{Regexp.escape(bind_param.to_sql)}|1)/i) do
+    assert_queries_match(/#{Regexp.escape(quote_table_name("companies.id"))} = (?:#{Regexp.escape(bind_param.to_sql)}|1)/i) do
       Account.all.merge!(includes: :firm).find(1)
     end
   end
@@ -548,7 +543,7 @@ class InheritanceComputeTypeTest < ActiveRecord::TestCase
 
   def test_inheritance_new_with_subclass_as_default
     original_type = Company.columns_hash["type"].default
-    ActiveRecord::Base.connection.change_column_default :companies, :type, "Firm"
+    ActiveRecord::Base.lease_connection.change_column_default :companies, :type, "Firm"
     Company.reset_column_information
 
     firm = Company.new # without arguments
@@ -567,7 +562,7 @@ class InheritanceComputeTypeTest < ActiveRecord::TestCase
     assert_equal "Client", firm.type
     assert_instance_of Client, firm
   ensure
-    ActiveRecord::Base.connection.change_column_default :companies, :type, original_type
+    ActiveRecord::Base.lease_connection.change_column_default :companies, :type, original_type
     Company.reset_column_information
   end
 end
@@ -597,15 +592,8 @@ end
 
 class InheritanceAttributeMappingTest < ActiveRecord::TestCase
   setup do
-    @old_registry = ActiveRecord::Type.registry
-    ActiveRecord::Type.registry = ActiveRecord::Type.registry.dup
-    ActiveRecord::Type.register :omg_sti, InheritanceAttributeMappingTest::OmgStiType
     Company.delete_all
     Sponsor.delete_all
-  end
-
-  teardown do
-    ActiveRecord::Type.registry = @old_registry
   end
 
   class OmgStiType < ActiveRecord::Type::String
@@ -623,6 +611,8 @@ class InheritanceAttributeMappingTest < ActiveRecord::TestCase
       end
     end
   end
+
+  ActiveRecord::Type.register :omg_sti, OmgStiType
 
   class Company < ActiveRecord::Base
     self.table_name = "companies"
@@ -644,7 +634,7 @@ class InheritanceAttributeMappingTest < ActiveRecord::TestCase
     Empire.create! name: "an Empire"
 
     assert_equal [["a Startup", "omg_inheritance_attribute_mapping_test/startup"],
-                  ["an Empire", "omg_inheritance_attribute_mapping_test/empire"]], ActiveRecord::Base.connection.select_rows("SELECT name, type FROM companies").sort
+                  ["an Empire", "omg_inheritance_attribute_mapping_test/empire"]], ActiveRecord::Base.lease_connection.select_rows("SELECT name, type FROM companies").sort
     assert_equal [["a Startup", "InheritanceAttributeMappingTest::Startup"],
                   ["an Empire", "InheritanceAttributeMappingTest::Empire"]], Company.all.map { |a| [a.name, a.type] }.sort
 
@@ -653,7 +643,7 @@ class InheritanceAttributeMappingTest < ActiveRecord::TestCase
     startup.save!
 
     assert_equal [["a Startup", "omg_inheritance_attribute_mapping_test/empire"],
-                  ["an Empire", "omg_inheritance_attribute_mapping_test/empire"]], ActiveRecord::Base.connection.select_rows("SELECT name, type FROM companies").sort
+                  ["an Empire", "omg_inheritance_attribute_mapping_test/empire"]], ActiveRecord::Base.lease_connection.select_rows("SELECT name, type FROM companies").sort
 
     assert_equal [["a Startup", "InheritanceAttributeMappingTest::Empire"],
                   ["an Empire", "InheritanceAttributeMappingTest::Empire"]], Company.all.map { |a| [a.name, a.type] }.sort
@@ -663,7 +653,7 @@ class InheritanceAttributeMappingTest < ActiveRecord::TestCase
     startup = Startup.create! name: "a Startup"
     sponsor = Sponsor.create! sponsorable: startup
 
-    assert_equal ["omg_inheritance_attribute_mapping_test/company"], ActiveRecord::Base.connection.select_values("SELECT sponsorable_type FROM sponsors")
+    assert_equal ["omg_inheritance_attribute_mapping_test/company"], ActiveRecord::Base.lease_connection.select_values("SELECT sponsorable_type FROM sponsors")
 
     sponsor = Sponsor.find(sponsor.id)
     assert_equal startup, sponsor.sponsorable
