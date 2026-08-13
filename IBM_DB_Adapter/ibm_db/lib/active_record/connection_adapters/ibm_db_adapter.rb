@@ -488,7 +488,11 @@ module ActiveRecord
           conn_string << "UID=#{username};PWD=#{password};"
           conn_string << "CLIENT_LOCALE=#{config[:client_locale]};" if config.has_key?(:client_locale)
           conn_string << "DB_LOCALE=#{config[:db_locale]};" if config.has_key?(:db_locale)
-          conn_string << "CONNECTTIMEOUT=#{config[:timeout]};" if config.has_key?(:timeout)
+          # CONNECTTIMEOUT is rejected with -11005 (invalid connection string
+          # attribute) by some Informix server/driver combinations, so it is
+          # opt-in via the dedicated connect_timeout key — timeout: keeps its
+          # pool/preflight semantics and no longer leaks into the conn string.
+          conn_string << "CONNECTTIMEOUT=#{config[:connect_timeout]};" if config.has_key?(:connect_timeout)
           connection = IBM_DB.connect(conn_string, '', '', conn_options, set_quoted_literal_replacement)
         elsif config.has_key?(:host)
           # Retrieves the host address/name
