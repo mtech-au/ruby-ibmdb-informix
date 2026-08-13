@@ -4690,7 +4690,12 @@ To remove the column, the table must be dropped and recreated without the #{colu
           elsif stmt = IBMDBWarningSilencer.silence { IBM_DB.exec(@adapter.connection, sql) }
             stmt # Return the statement object
           else
-            raise IBM_DB.getErrormsg(@adapter.connection, IBM_DB::DB_CONN)
+            # getErrormsg can return nil/empty (seen on DRDA after a failed
+            # statement) — raising nil turns the real failure into
+            # "TypeError: exception class/object expected"
+            error_msg = IBM_DB.getErrormsg(@adapter.connection, IBM_DB::DB_CONN)
+            error_msg = "Statement execution failed with no driver error message: #{sql}" if error_msg.nil? || error_msg.empty?
+            raise error_msg
           end
         rescue StandardError => e
           @adapter.puts_log "104 error = #{e.message}"
