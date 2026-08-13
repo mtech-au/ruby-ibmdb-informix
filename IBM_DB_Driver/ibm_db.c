@@ -2556,12 +2556,18 @@ static VALUE _ruby_ibm_db_connect_helper2( connect_helper_args *data ) {
 	   data->entry = entry;
 	   return entry;
   } else {
-		data->conn_res = conn_res;		
-		/* The ANSI (non-unicode) caller uses this return value directly; the
-		   unicode caller reads data->conn_res/data->entry and ignores it. */
+		data->conn_res = conn_res;
+#ifndef UNICODE_SUPPORT_VERSION_H
+		/* The ANSI (non-unicode) caller uses this return value directly. */
 		return Data_Wrap_Struct(le_conn_struct,
 _ruby_ibm_db_mark_conn_struct, _ruby_ibm_db_free_conn_struct,
 conn_res);
+#else
+		/* The unicode caller wraps data->conn_res itself; wrapping here too
+		   would create two Ruby objects owning the same struct, so its two
+		   finalizers would free it twice (malloc abort at GC/exit). */
+		return Qnil;
+#endif
   }
 }
 
