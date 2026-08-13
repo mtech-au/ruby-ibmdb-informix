@@ -3516,7 +3516,13 @@ module ActiveRecord
                 scale: column_scale
               )
 
-              columns << IBM_DBColumn.new(column_name, default_value, sqltype_metadata, column_nullable, default_function,
+              # Rails 8.1 inserted a cast_type positional arg into Column#initialize
+              # (name, cast_type, default, sql_type_metadata, null, default_function, ...).
+              # Passing 8.0-order args shifts everything and Column#initialize calls
+              # nil.mutable? whenever the column has a default.
+              column_args = [column_name, default_value, sqltype_metadata, column_nullable, default_function]
+              column_args.insert(1, lookup_cast_type(sqltype_metadata.sql_type)) if ActiveRecord.gem_version >= Gem::Version.new('8.1.0.a')
+              columns << IBM_DBColumn.new(*column_args,
                                           comment: col['remarks'], auto_increment: auto_increment, rowid: rowid)
             end
           rescue StandardError => e # Handle driver fetch errors
