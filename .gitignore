@@ -6,4 +6,6 @@ unicode_support_version
 /.idea
 .DS_Store
 /IBM_DB_Adapter/ibm_db/lib/clidriver/*
+**/.DS_store
+
 
