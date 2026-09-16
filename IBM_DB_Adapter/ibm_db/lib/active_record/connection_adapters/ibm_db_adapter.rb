@@ -1064,8 +1064,16 @@ module ActiveRecord
         # repeatedly per table (columns -> primary_key, dumper -> primary_key).
         @primary_key_cache = {}
 
-        # Calls the parent class +ConnectionAdapters+' initializer
+        # Calls the parent class +ConnectionAdapters+' initializer.
+        # NOTE: this resets @raw_connection to nil, so the handle we were
+        # handed above has to be re-published to Active Record afterwards.
         super(@config)
+
+        # Active Record owns @raw_connection: +with_raw_connection+ yields it,
+        # +seconds_since_last_activity+ needs it, and it calls +connect!+ on
+        # every single statement while it is nil. Keep it pointing at the same
+        # handle as @connection.
+        @raw_connection = @connection || nil
 
         if @connection
           server_info = IBM_DB.server_info(@connection)
@@ -1356,6 +1364,8 @@ module ActiveRecord
         puts_log "active? #{caller} #{Thread.current}"
         @lock.synchronize do
           puts_log "active? #{@connection}, #{caller}, #{Thread.current}"
+          return false if @connection.nil? || @connection == false
+
           isActive = IBM_DB.active @connection
           puts_log "active? isActive = #{isActive}"
         end
@@ -1460,6 +1470,7 @@ module ActiveRecord
           warn "Connection to database #{@database} failed: #{e}"
           puts_log "Connection to database #{@database} failed: #{e}"
           @connection = false
+          @raw_connection = nil
         end
         # Sets the schema if different from default (username)
         return unless @schema && @schema != @username
@@ -1483,10 +1494,26 @@ module ActiveRecord
       # Closes the current connection and opens a new one
       def reconnect
         puts_log "reconnect #{caller} #{Thread.current}"
-#disconnect!
         @lock.synchronize do
           puts_log "Before reconnection = #{@connection}, #{Thread.current}"
-          connect unless @connection
+
+          if @connection
+            begin
+              IBM_DB.close(@connection)
+            rescue StandardError => e
+              # The handle may already be dead; that is exactly why we are here.
+              puts_log "reconnect: close of old handle failed #{e.message}"
+            end
+            @connection = nil
+            @raw_connection = nil
+          end
+
+          connect
+
+          unless @connection
+            raise ActiveRecord::ConnectionNotEstablished,
+                  "Could not reconnect to database #{@database}"
+          end
         end
       end
 
@@ -1521,10 +1548,12 @@ module ActiveRecord
         end
       end
 
-      # Check the connection back in to the connection pool
+      # Check the connection back in to the connection pool. Note that this
+      # must NOT disconnect: once checkin returns, another thread may already
+      # have leased this adapter, and closing the handle here would pull it out
+      # from under that thread (and force a reconnect on every checkout).
       def close
         pool.checkin self
-        disconnect!
       end
 
       def connected?
@@ -2384,7 +2413,16 @@ module ActiveRecord
           with_raw_connection(allow_retry: allow_retry, materialize_transactions: materialize_transactions) do |conn|
             retry_count = 0
             begin
-              verify!
+              # NOTE: do NOT call verify! here. with_raw_connection has already
+              # decided whether this connection needs verifying, and it only
+              # does so when reconnect_can_restore_state? is true. Calling it
+              # unconditionally from inside the block bypasses that guard: with
+              # a dirty transaction open, verify! -> reconnect! ->
+              # reset_transaction(restore: true) finds restorable? == false,
+              # swaps in a fresh TransactionManager and never restores the old
+              # one. Active Record then loses the open transaction, the next
+              # save! opens a new top-level one and COMMITS it, and the outer
+              # rollback rolls back nothing.
               puts_log "raw_execute executes query #{Thread.current}"
               sql = preprocess_query(sql)
               if binds.nil? || binds.empty?
@@ -2521,10 +2559,10 @@ module ActiveRecord
 
       alias delete update
 
-      def auto_commit_on
+      def auto_commit_on(conn = @connection)
         puts_log 'Inside auto_commit_on'
-        IBM_DB.autocommit @connection, IBM_DB::SQL_AUTOCOMMIT_ON
-        ac = IBM_DB::autocommit @connection
+        IBM_DB.autocommit conn, IBM_DB::SQL_AUTOCOMMIT_ON
+        ac = IBM_DB::autocommit conn
         if ac != 1
           puts_log "Cannot set IBM_DB::AUTOCOMMIT_ON"
         else
@@ -2532,10 +2570,10 @@ module ActiveRecord
         end
       end
 
-      def auto_commit_off
+      def auto_commit_off(conn = @connection)
         puts_log 'auto_commit_off'
-        IBM_DB.autocommit(@connection, IBM_DB::SQL_AUTOCOMMIT_OFF)
-        ac = IBM_DB::autocommit @connection
+        IBM_DB.autocommit(conn, IBM_DB::SQL_AUTOCOMMIT_OFF)
+        ac = IBM_DB::autocommit conn
         if ac != 0
           puts_log "Cannot set IBM_DB::AUTOCOMMIT_OFF"
         else
@@ -2549,7 +2587,7 @@ module ActiveRecord
         log('begin transaction', 'TRANSACTION') do
           with_raw_connection(allow_retry: true, materialize_transactions: false) do |conn|
             # Turns off the auto-commit
-            auto_commit_off
+            auto_commit_off(conn)
             verified!
           end
         end
@@ -2560,16 +2598,16 @@ module ActiveRecord
         puts_log 'commit_db_transaction'
         log('commit transaction', 'TRANSACTION') do
           with_raw_connection(allow_retry: false, materialize_transactions: true) do |conn|
-            exec_commit_db_transaction
+            exec_commit_db_transaction(conn)
+            # Turns auto-committing back on, on the same handle we committed.
+            auto_commit_on(conn)
             verified!
           end
         end
-        # Turns on auto-committing
-        auto_commit_on
       end
 
-      def exec_commit_db_transaction
-        IBM_DB.commit(@connection)
+      def exec_commit_db_transaction(conn = @connection)
+        IBM_DB.commit(conn)
       end
 
       # Rolls back the transaction and turns on auto-committing. Must be
@@ -2578,19 +2616,19 @@ module ActiveRecord
         puts_log 'rollback_db_transaction'
         log('rollback transaction', 'TRANSACTION') do
           with_raw_connection(allow_retry: false, materialize_transactions: true) do |conn|
-            exec_rollback_db_transaction
+            exec_rollback_db_transaction(conn)
+            # Turns auto-committing back on, on the same handle we rolled back.
+            auto_commit_on(conn)
             verified!
           end
         end
         if pool.dirties_query_cache
           ActiveRecord::Base.clear_query_caches_for_current_thread
         end
-        # Turns on auto-committing
-        auto_commit_on
       end
 
-      def exec_rollback_db_transaction
-        IBM_DB.rollback(@connection)
+      def exec_rollback_db_transaction(conn = @connection)
+        IBM_DB.rollback(conn)
       end
 
       def create_savepoint(name = current_savepoint_name)

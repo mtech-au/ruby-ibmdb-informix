@@ -51,9 +51,23 @@
 #define SQL_ATTR_TRUSTED_CONTEXT_PASSWORD 2563
 #endif
 
-/* DB2 connection-level ping attribute (sqlcli1.h) */
+/* DB2 connection-level ping attribute (sqlcli1.h). Defined so the DB2 code
+   path still compiles; the Informix driver does not implement it, so
+   IBM_DB.active uses SQL_ATTR_CONNECTION_DEAD below instead. */
 #ifndef SQL_ATTR_PING_DB
 #define SQL_ATTR_PING_DB          2545
+#endif
+
+/* Standard ODBC 3.x connection-liveness attribute (sqlext.h). Values are fixed
+   by the ODBC specification; defined here for header sets that omit them. */
+#ifndef SQL_ATTR_CONNECTION_DEAD
+#define SQL_ATTR_CONNECTION_DEAD  1209
+#endif
+#ifndef SQL_CD_TRUE
+#define SQL_CD_TRUE               1
+#endif
+#ifndef SQL_CD_FALSE
+#define SQL_CD_FALSE              0
 #endif
 
 /* DB2 SQLGetInfo extensions used by client_info/server_info (sqlcli.h) */

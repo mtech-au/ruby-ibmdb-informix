@@ -333,4 +333,10 @@ module ActiveRecord
       super if current_adapter?(:SQLite3Adapter)
     end
   end
+
+  class IBM_DBTestCase < TestCase
+    def self.run(*args)
+      super if current_adapter?(:IBM_DBAdapter)
+    end
+  end
 end

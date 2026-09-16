@@ -11825,8 +11825,41 @@ VALUE ibm_db_active(int argc, VALUE *argv, VALUE self)
   conn_alive = 0;
 
   rb_scan_args(argc, argv, "1", &connection);
-  if (!NIL_P(connection)) {
+  if (!NIL_P(connection) && connection != Qfalse) {
     Data_Get_Struct(connection, conn_handle, conn_res);
+#ifdef IBM_DB_INFORMIX_ODBC
+    /*
+    *  The Informix CSDK ODBC driver does not implement the DB2 CLI
+    *  SQL_ATTR_PING_DB attribute, so SQLGetConnectAttr always fails for it and
+    *  every connection would look permanently dead -- which makes the caller
+    *  re-verify and reconnect on every single checkout. Use the standard
+    *  ODBC 3.x SQL_ATTR_CONNECTION_DEAD attribute instead, and treat "the
+    *  driver cannot answer" as alive: a stale handle then surfaces as an
+    *  ordinary query error, which the caller can translate and retry.
+    */
+    if ( conn_res && conn_res->handle_active ) {
+      SQLINTEGER conn_dead = SQL_CD_FALSE;
+
+      get_handleAttr_args = ALLOC( get_handle_attr_args );
+      memset(get_handleAttr_args,'\0',sizeof(struct _ibm_db_get_handle_attr_struct));
+
+      get_handleAttr_args->handle       =  &( conn_res->hdbc );
+      get_handleAttr_args->attribute    =  SQL_ATTR_CONNECTION_DEAD;
+      get_handleAttr_args->valuePtr     =  (SQLPOINTER)&conn_dead;
+      get_handleAttr_args->buff_length  =  0;
+      get_handleAttr_args->out_length   =  NULL;
+
+      rc = _ruby_ibm_db_SQLGetConnectAttr_helper( get_handleAttr_args );
+
+      ruby_xfree( get_handleAttr_args );
+      get_handleAttr_args = NULL;
+
+      /* Deliberately not recorded via _ruby_ibm_db_check_sql_errors: active? is
+         polled constantly, and an unsupported-attribute diagnostic here would
+         overwrite the last real connection error. */
+      conn_alive = ( rc == SQL_ERROR || conn_dead == SQL_CD_FALSE ) ? 1 : 0;
+    }
+#else /* !IBM_DB_INFORMIX_ODBC */
 #ifndef PASE
     get_handleAttr_args = ALLOC( get_handle_attr_args );
     memset(get_handleAttr_args,'\0',sizeof(struct _ibm_db_get_handle_attr_struct));
@@ -11846,6 +11879,7 @@ VALUE ibm_db_active(int argc, VALUE *argv, VALUE self)
       _ruby_ibm_db_check_sql_errors( conn_res, DB_CONN, conn_res->hdbc, SQL_HANDLE_DBC, rc, 1, NULL, NULL, -1, 1, 1 );
     }
 #endif /* PASE */
+#endif /* IBM_DB_INFORMIX_ODBC */
   }
   /*
   *  SQLGetConnectAttr with SQL_ATTR_PING_DB will return 0 on failure but will return
