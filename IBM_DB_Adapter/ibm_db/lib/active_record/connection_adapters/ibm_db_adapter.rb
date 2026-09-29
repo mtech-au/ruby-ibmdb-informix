@@ -5626,10 +5626,25 @@ module Arel
     end
 
     module IBMDBTransactionCallbacksPatch
+      # Rails 8.1.4 added a leading position argument to the private
+      # set_options_for_callbacks!(position, args, enforced_options = {}).
+      POSITIONAL_CALLBACK_OPTIONS =
+        ActiveRecord::Transactions::ClassMethods.instance_method(:set_options_for_callbacks!).arity == -3
+
       private
 
       def prepend_option
         {}
+      end
+
+      # Passing the callback type as the position keeps Rails 8.1.4+ from
+      # forcing prepend: onto :before callbacks, matching prepend_option.
+      def ibm_db_set_options_for_callbacks!(args, enforced_options = {})
+        if POSITIONAL_CALLBACK_OPTIONS
+          set_options_for_callbacks!(transaction_callback_type, args, enforced_options)
+        else
+          set_options_for_callbacks!(args, enforced_options)
+        end
       end
 
       def transaction_callback_type
@@ -5643,32 +5658,32 @@ module Arel
       public
 
       def after_commit(*args, &block)
-        set_options_for_callbacks!(args, prepend_option)
+        ibm_db_set_options_for_callbacks!(args, prepend_option)
         set_callback(:commit, transaction_callback_type, *args, &block)
       end
 
       def after_save_commit(*args, &block)
-        set_options_for_callbacks!(args, on: [ :create, :update ], **prepend_option)
+        ibm_db_set_options_for_callbacks!(args, on: [ :create, :update ], **prepend_option)
         set_callback(:commit, transaction_callback_type, *args, &block)
       end
 
       def after_create_commit(*args, &block)
-        set_options_for_callbacks!(args, on: :create, **prepend_option)
+        ibm_db_set_options_for_callbacks!(args, on: :create, **prepend_option)
         set_callback(:commit, transaction_callback_type, *args, &block)
       end
 
       def after_update_commit(*args, &block)
-        set_options_for_callbacks!(args, on: :update, **prepend_option)
+        ibm_db_set_options_for_callbacks!(args, on: :update, **prepend_option)
         set_callback(:commit, transaction_callback_type, *args, &block)
       end
 
       def after_destroy_commit(*args, &block)
-        set_options_for_callbacks!(args, on: :destroy, **prepend_option)
+        ibm_db_set_options_for_callbacks!(args, on: :destroy, **prepend_option)
         set_callback(:commit, transaction_callback_type, *args, &block)
       end
 
       def after_rollback(*args, &block)
-        set_options_for_callbacks!(args, prepend_option)
+        ibm_db_set_options_for_callbacks!(args, prepend_option)
         set_callback(:rollback, transaction_callback_type, *args, &block)
       end
     end
