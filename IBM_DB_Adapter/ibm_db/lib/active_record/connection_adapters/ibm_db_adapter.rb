@@ -3225,21 +3225,26 @@ module ActiveRecord
         # Query table statistics for all indexes on the table
         # "TABLE_NAME:   #{index_stats[2]}"
         # "NON_UNIQUE:   #{index_stats[3]}"
+        # "INDEX_QUALIFIER: #{index_stats[4]}"
         # "INDEX_NAME:   #{index_stats[5]}"
         # "COLUMN_NAME:  #{index_stats[8]}"
-        stmt = IBM_DB.statistics(@connection, nil,
+        stmt = IBM_DB.statistics(conn, nil,
                                  @servertype.set_case(@schema),
                                  @servertype.set_case(table_name), 1)
         if stmt
           begin
             while (index_stats = IBM_DB.fetch_array(stmt))
               is_composite = false
-              next unless index_stats[5] # INDEX_NAME
+              # mtech - skip rows without an index or column name: the SQL_TABLE_STAT
+              # row (INDEX_NAME nil) and expression/functional index keys (COLUMN_NAME nil)
+              next unless index_stats[5] && index_stats[8]
 
               index_name = index_stats[5].downcase
               index_unique = (index_stats[3] == 0)
               index_columns = [index_stats[8].downcase] # COLUMN_NAME
-              index_qualifier = index_stats[4].downcase # Index_Qualifier
+              # mtech - Informix ODBC returns INDEX_QUALIFIER as nil on every row; nil == nil
+              # still groups a composite index's columns by name
+              index_qualifier = index_stats[4]&.downcase
               # Create an IndexDefinition object and add to the indexes array
               i = 0
               indexes.each do |index|
@@ -3277,7 +3282,7 @@ module ActiveRecord
             IBM_DB.free_stmt(stmt) if stmt
           end
         else # Handle driver execution errors
-          error_msg = IBM_DB.getErrormsg(@connection, IBM_DB::DB_CONN)
+          error_msg = IBM_DB.getErrormsg(conn, IBM_DB::DB_CONN)
           raise "Failed to retrieve index metadata due to error: #{error_msg}" if error_msg && !error_msg.empty?
 
           raise StandardError.new('An unexpected error occurred during index retrieval')
