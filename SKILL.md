@@ -23,7 +23,7 @@ environment variable. Without it, the gem behaves like upstream `ibm_db`
   downloaded during the build. The directory must contain `incl/cli` (with
   `infxcli.h`) and `lib/cli` (with `libthcli.so` or `libifcli.so`).
 - Ruby >= 2.5 with dev headers (`ruby-dev`) and a C toolchain (`build-essential`).
-- Rails/ActiveRecord 7.2.x if using the adapter.
+- Rails/ActiveRecord 8.x (>= 8.0, < 9.0, per the gemspec) if using the adapter.
 
 ## Build-time environment variables
 
@@ -44,9 +44,13 @@ runtime — **but the CSDK must stay at the same path it had at build time.**
 ```ruby
 gem 'ibm_db',
     git: 'https://github.com/mtech-au/ruby-ibmdb-informix.git',
-    branch: 'master',
+    branch: 'mtech-ids-informix',
     glob: 'IBM_DB_Adapter/ibm_db/*.gemspec'
 ```
+
+Use the `mtech-ids-informix` branch: that is where Informix fixes land.
+`master` tracks IBM upstream and lags behind it (it lacks, for example, the
+transaction-rollback and index-metadata fixes).
 
 The `glob:` option is required — the gem lives in the `IBM_DB_Adapter/ibm_db/`
 subdirectory of the repo, which Bundler's default gemspec search does not reach.
@@ -223,6 +227,21 @@ conn = IBM_DB.connect(
 - ANSI (non-Unicode) build only — wide-char (`SQLWCHAR`) entry points are
   deliberately not used; set `client_locale`/`db_locale` for non-default
   character sets.
+- `drop_table(name, if_exists: true)` raises when the table does not exist:
+  the missing-table check only recognises DB2's messages (`SQL0204N`,
+  "does not exist"), not Informix's `-206 ... is not in the database`.
+  Check `table_exists?` first.
+- `indexes(table)` never returns an index qualifier: the CSDK reports
+  `INDEX_QUALIFIER` as NULL, so indexes are identified by name alone.
+  Expression/functional index keys (no `COLUMN_NAME`) are omitted.
+
+## Troubleshooting runtime errors
+
+- `An unexpected error occurred during retrieval of index metadata:
+  undefined method 'downcase' for nil` — the gem predates the fix for NULL
+  `INDEX_QUALIFIER`. Rails hits it through `UniquenessValidator` whenever a
+  persisted record with a uniqueness validation is saved, so updates fail.
+  `bundle update ibm_db --conservative` onto the current `mtech-ids-informix`.
 
 ## Troubleshooting install failures
 
