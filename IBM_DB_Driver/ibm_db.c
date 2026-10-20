@@ -1133,8 +1133,8 @@ static void _ruby_ibm_db_check_sql_errors( void *conn_or_stmt, int resourceType,
   sqlstate  =  ALLOC_N( SQLCHAR, SQL_SQLSTATE_SIZE + 1 );
   memset(sqlstate, '\0', SQL_SQLSTATE_SIZE + 1);
 
-  print_str  =  ALLOC_N( SQLCHAR, SQL_SQLSTATE_SIZE + 1 + 10);
-  memset(print_str, '\0', SQL_SQLSTATE_SIZE + 1 + 10);
+  print_str  =  ALLOC_N( SQLCHAR, SQL_SQLSTATE_SIZE + 1 + 10 + DB2_ISAM_MSG_LEN);
+  memset(print_str, '\0', SQL_SQLSTATE_SIZE + 1 + 10 + DB2_ISAM_MSG_LEN);
 #endif
 
   get_DiagRec_args  =  ALLOC( get_diagRec_args );
@@ -1198,6 +1198,19 @@ static void _ruby_ibm_db_check_sql_errors( void *conn_or_stmt, int resourceType,
 
     memcpy( errMsg, msg, length );
     sprintf(print_str, " SQLCODE=%d", (int)sqlcode);
+#ifdef IBM_DB_INFORMIX_ODBC
+    {
+      /* The Informix CSDK reports the ISAM error (e.g. -107 record locked,
+         -154 lock timeout) only through this Informix-specific diag field,
+         never as a separate diag record. Append it so callers can tell a
+         lock failure from any other -243/-244. (Informix builds are ANSI.) */
+      SQLINTEGER isam = 0;
+      if ( SQLGetDiagField( hType, handle, recno, SQL_DIAG_ISAM_ERROR, &isam, sizeof(isam), NULL ) == SQL_SUCCESS
+           && isam != 0 ) {
+        sprintf( (char *)print_str + strlen( print_str ), " ISAM=%d", (int)isam );
+      }
+    }
+#endif
     memcpy( (char *)errMsg + length, print_str, strlen( print_str ) );
     length = length + strlen( print_str );
 #endif
@@ -9430,6 +9443,32 @@ VALUE ibm_db_result(int argc, VALUE *argv, VALUE self)
 }
 /*  */
 
+/*
+ * Sets *error to prefix + the statement's last error message, so the fetch_*
+ * wrappers raise it. A fetch that fails must not return false: callers treat
+ * false as "no more rows", which silently cuts the result set short.
+ */
+static void _ruby_ibm_db_set_fetch_error( VALUE *error, stmt_handle *stmt_res, const char *prefix )
+{
+  if( stmt_res != NULL && stmt_res->ruby_stmt_err_msg != NULL ) {
+#ifdef UNICODE_SUPPORT_VERSION_H
+    *error = rb_str_concat( _ruby_ibm_db_export_char_to_utf8_rstr(prefix),
+               _ruby_ibm_db_export_sqlwchar_to_utf8_rstr( stmt_res->ruby_stmt_err_msg,
+                         stmt_res->ruby_stmt_err_msg_len )
+             );
+#else
+    *error = rb_str_cat2( rb_str_new2(prefix), stmt_res->ruby_stmt_err_msg );
+#endif
+  } else {
+#ifdef UNICODE_SUPPORT_VERSION_H
+    *error = rb_str_concat( _ruby_ibm_db_export_char_to_utf8_rstr(prefix),
+               _ruby_ibm_db_export_char_to_utf8_rstr("<error message could not be retrieved>") );
+#else
+    *error = rb_str_cat2( rb_str_new2(prefix), "<error message could not be retrieved>" );
+#endif
+  }
+}
+
 /*  static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
 */
 static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
@@ -9692,8 +9731,9 @@ static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
           if ( rc == SQL_ERROR ) {
             ruby_xfree( out_ptr );
             out_ptr = NULL;
-			data->return_value = Qfalse;
-            return Qfalse;
+            _ruby_ibm_db_set_fetch_error( data->error, stmt_res, "Fetch Failure: " );
+            data->return_value = Qnil;
+            return Qnil;
           }
           if (out_length == SQL_NULL_DATA) {
             if ( op & FETCH_ASSOC ) {
@@ -9885,8 +9925,9 @@ static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
                   ruby_xfree( out_ptr );
                   out_ptr = NULL;
                   out_length = 0;
-				  data->return_value = Qfalse;
-                  return Qfalse;
+                  _ruby_ibm_db_set_fetch_error( data->error, stmt_res, "Fetch Failure: " );
+                  data->return_value = Qnil;
+                  return Qnil;
                 }
 
                 if ( op & FETCH_ASSOC ) {
@@ -9965,8 +10006,9 @@ static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
             if (rc == SQL_ERROR) {
               ruby_xfree( out_ptr );
               out_ptr = NULL;
-			  data->return_value = Qfalse;
-              return Qfalse;
+              _ruby_ibm_db_set_fetch_error( data->error, stmt_res, "Fetch Failure: " );
+              data->return_value = Qnil;
+              return Qnil;
             }
 
             if ( op & FETCH_ASSOC ) {
@@ -10040,8 +10082,9 @@ static VALUE _ruby_ibm_db_bind_fetch_helper(ibm_db_fetch_helper_args *data)
               ruby_xfree( out_ptr );
               out_ptr =  NULL;
               out_length = 0;
-			  data->return_value = Qfalse;
-              return Qfalse;
+              _ruby_ibm_db_set_fetch_error( data->error, stmt_res, "Fetch Failure: " );
+              data->return_value = Qnil;
+              return Qnil;
             }
 
             if ( op & FETCH_ASSOC ) {
@@ -10167,9 +10210,15 @@ static int _ruby_ibm_db_fetch_row_helper( ibm_db_fetch_helper_args *data) {
   if ( ret_val == Qnil ) {
     if (rc == SQL_SUCCESS || rc == SQL_SUCCESS_WITH_INFO) {
       ret_val = Qtrue;
-    } else {
-      _ruby_ibm_db_check_sql_errors( stmt_res, DB_STMT, stmt_res->hstmt, SQL_HANDLE_STMT, rc, 1, NULL, NULL, -1, 1, 0 );
+    } else if (rc == SQL_NO_DATA_FOUND) {
       ret_val = Qfalse;
+    } else {
+      /* A failed fetch (e.g. a row locked by another session) is an error,
+         not "no row": set it so ibm_db_fetch_row raises. */
+      _ruby_ibm_db_check_sql_errors( stmt_res, DB_STMT, stmt_res->hstmt, SQL_HANDLE_STMT, rc, 1, NULL, NULL, -1, 1, 0 );
+      _ruby_ibm_db_set_fetch_error( data->error, stmt_res, "Fetch Failure: " );
+      data->return_value = Qnil;
+      return Qnil;
     }
   }
   data->return_value = ret_val;

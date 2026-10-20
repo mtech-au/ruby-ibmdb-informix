@@ -194,6 +194,7 @@ production:
   protocol: onsoctcp                 # default onsoctcp
   client_locale: en_US.8859-1        # optional
   db_locale: en_US.8859-1            # optional
+  lock_wait: 5                       # optional: seconds to wait for a locked row
 ```
 
 Key differences from the stock DB2 configuration:
@@ -206,6 +207,28 @@ Key differences from the stock DB2 configuration:
   `service` (`protocol` defaults to `onsoctcp`).
 - DB2-only keys (`security`, `authentication`, `timeout` as CONNECTTIMEOUT)
   are ignored/not sent in Informix mode — the CSDK ODBC driver rejects them.
+- `lock_wait` runs `SET LOCK MODE TO WAIT n` on every connect and reconnect
+  (`0` = `NOT WAIT`; unset = leave the server default, which is not to wait).
+  Informix counts in whole seconds, so a blocked statement fails after n-1 to
+  n seconds. Informix only; other servers raise `ArgumentError`.
+
+### Locks and lock errors
+
+- Informix lock failures raise `ActiveRecord::LockWaitTimeout`: SQLCODE -233,
+  and -243/-244/-245 when the ISAM code is -107/-113/-143/-154 (record or file
+  locked, deadlock, lock timeout). Driver messages end in `SQLCODE=n ISAM=n`.
+  -239/-268 raise `ActiveRecord::RecordNotUnique`.
+- A locked row read by a SELECT fails **at fetch time**. It raises like any
+  other statement error.
+- `Model.lock`, `lock!` and `with_lock` emit `FOR UPDATE`, and
+  `lock("FOR UPDATE OF col")` emits that string. Informix allows FOR UPDATE
+  only on a simple SELECT: with ORDER BY, DISTINCT, aggregates, UNION or a join
+  it fails with -365. FIRST/SKIP are fine.
+- Under COMMITTED READ (the default) the update lock is released as soon as
+  the cursor moves on or closes, unless the row was modified. A locking read
+  therefore does **not** serialise writers by itself. To hold a row for the
+  rest of the transaction, write to it (a no-op `UPDATE ... SET col = col`).
+- Outside a transaction (autocommit) a `FOR UPDATE` read takes no lock at all.
 
 ### Low-level driver connection string
 
@@ -233,6 +256,8 @@ conn = IBM_DB.connect(
 
 ## Troubleshooting runtime errors
 
+- `select_value` returns `":"` (or `select_all` returns a single string) when
+  a row is locked: the gem predates the fetch-error fix. Update the gem.
 - `An unexpected error occurred during retrieval of index metadata:
   undefined method 'downcase' for nil` — the gem predates the fix for NULL
   `INDEX_QUALIFIER`. Rails hits it through `UniquenessValidator` whenever a
