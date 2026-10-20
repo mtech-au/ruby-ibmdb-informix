@@ -854,6 +854,15 @@ module ActiveRecord
 
       include Savepoints
 
+      # DB2: SQL0204N "... does not exist". Informix: -206 "The specified
+      # table (x) is not in the database."
+      def missing_table_error?(error)
+        message = error.message
+        message.include?("SQL0204N") || message.include?("does not exist") ||
+          message.include?("is not in the database")
+      end
+      private :missing_table_error?
+
       def drop_table(*table_names, **options)
         # Handle legacy call style: drop_table(name, { ... })
         names = table_names.dup
@@ -877,7 +886,7 @@ module ActiveRecord
           begin
             execute(drop_sql)
           rescue StandardError => e
-            missing_table = e.message.include?("SQL0204N") || e.message.include?("does not exist")
+            missing_table = missing_table_error?(e)
 
             if missing_table && fallback_drop_sql && fallback_drop_sql != drop_sql
               begin
@@ -885,7 +894,7 @@ module ActiveRecord
                 next
               rescue StandardError => fallback_error
                 e = fallback_error
-                missing_table = e.message.include?("SQL0204N") || e.message.include?("does not exist")
+                missing_table = missing_table_error?(e)
               end
             end
 

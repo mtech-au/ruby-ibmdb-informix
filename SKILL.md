@@ -227,10 +227,6 @@ conn = IBM_DB.connect(
 - ANSI (non-Unicode) build only — wide-char (`SQLWCHAR`) entry points are
   deliberately not used; set `client_locale`/`db_locale` for non-default
   character sets.
-- `drop_table(name, if_exists: true)` raises when the table does not exist:
-  the missing-table check only recognises DB2's messages (`SQL0204N`,
-  "does not exist"), not Informix's `-206 ... is not in the database`.
-  Check `table_exists?` first.
 - `indexes(table)` never returns an index qualifier: the CSDK reports
   `INDEX_QUALIFIER` as NULL, so indexes are identified by name alone.
   Expression/functional index keys (no `COLUMN_NAME`) are omitted.
