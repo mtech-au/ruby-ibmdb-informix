@@ -854,6 +854,15 @@ module ActiveRecord
 
       include Savepoints
 
+      # DB2: SQL0204N "... does not exist". Informix: -206 "The specified
+      # table (x) is not in the database."
+      def missing_table_error?(error)
+        message = error.message
+        message.include?("SQL0204N") || message.include?("does not exist") ||
+          message.include?("is not in the database")
+      end
+      private :missing_table_error?
+
       def drop_table(*table_names, **options)
         # Handle legacy call style: drop_table(name, { ... })
         names = table_names.dup
@@ -877,7 +886,7 @@ module ActiveRecord
           begin
             execute(drop_sql)
           rescue StandardError => e
-            missing_table = e.message.include?("SQL0204N") || e.message.include?("does not exist")
+            missing_table = missing_table_error?(e)
 
             if missing_table && fallback_drop_sql && fallback_drop_sql != drop_sql
               begin
@@ -885,7 +894,7 @@ module ActiveRecord
                 next
               rescue StandardError => fallback_error
                 e = fallback_error
-                missing_table = e.message.include?("SQL0204N") || e.message.include?("does not exist")
+                missing_table = missing_table_error?(e)
               end
             end
 
@@ -1038,6 +1047,9 @@ module ActiveRecord
         @protocol         = config[:protocol]
         @client_locale    = config[:client_locale]
         @db_locale        = config[:db_locale]
+        # Seconds a statement waits for a row another session has locked
+        # (Informix SET LOCK MODE). 0 = don't wait; unset = server default.
+        @lock_wait        = config[:lock_wait]
         @schema = if config.has_key?(:schema)
                     config[:schema]
                   else
@@ -1125,6 +1137,10 @@ module ActiveRecord
 
         # Executes the +set schema+ statement using the schema identifier provided
         @servertype.set_schema(@schema) if @schema && @schema != @username
+
+        # The connection above was opened before Active Record's connect!, so
+        # configure_connection never runs for it; apply lock_wait here too.
+        apply_lock_wait if @connection
 
         # Check for the start value for id (primary key column). By default it is 1
         @start_id = if config.has_key?(:start_id)
@@ -1480,6 +1496,37 @@ module ActiveRecord
       end
       private :connect
 
+      # Runs after every reconnect (Active Record's reconnect! calls it).
+      def configure_connection
+        super
+        apply_lock_wait
+      end
+      private :configure_connection
+
+      # Applies the lock_wait database.yml key: SET LOCK MODE TO WAIT n, or
+      # NOT WAIT for 0. Does nothing when the key is unset. Informix counts the
+      # wait in whole-second ticks, so a blocked statement fails after n-1 to
+      # n seconds.
+      def apply_lock_wait
+        return if @lock_wait.nil? || !@connection
+
+        unless @servertype.is_a?(IBM_IDS)
+          raise ArgumentError, 'lock_wait is only supported on Informix (it runs SET LOCK MODE)'
+        end
+
+        seconds = @lock_wait.is_a?(Integer) ? @lock_wait : Integer(@lock_wait.to_s, exception: false)
+        if seconds.nil? || seconds.negative?
+          raise ArgumentError, "lock_wait must be a whole number of seconds (0 = don't wait), got #{@lock_wait.inspect}"
+        end
+
+        sql = seconds.zero? ? 'SET LOCK MODE TO NOT WAIT' : "SET LOCK MODE TO WAIT #{seconds}"
+        stmt = IBM_DB.exec(@connection, sql)
+        raise StatementInvalid, "#{sql} failed: #{IBM_DB.getErrormsg(@connection, IBM_DB::DB_CONN)}" unless stmt
+      ensure
+        IBM_DB.free_stmt(stmt) if stmt
+      end
+      private :apply_lock_wait
+
       def reset!
         puts_log "reset! #{caller} #{Thread.current}"
         @lock.synchronize do
@@ -1619,19 +1666,19 @@ module ActiveRecord
         end
       end
 
-      # Calls the servertype select method to fetch the data
-      def fetch_data(stmt)
+      # Calls the servertype select method to fetch the data.
+      # A failed fetch (e.g. a row locked by another session, which Informix
+      # reports at fetch time, not at execute) always raises, translated like
+      # any other statement error. It used to come back as the error text in
+      # place of the rows, so select_value returned ":".
+      def fetch_data(stmt, sql = nil, binds = [])
         puts_log 'fetch_data'
         return unless stmt
 
         begin
           @servertype.select(stmt)
         rescue StandardError => e # Handle driver fetch errors
-          error_msg = IBM_DB.getErrormsg(stmt, IBM_DB::DB_STMT)
-          raise StatementInvalid, "Failed to retrieve data: #{error_msg}" if error_msg && !error_msg.empty?
-
-          error_msg += ": #{e.message}" unless e.message.empty?
-         #raise error_msg
+          raise translate_exception_class(fetch_error(e), sql, binds)
         ensure
           # Ensures to free the resources associated with the statement
           if stmt
@@ -1640,6 +1687,16 @@ module ActiveRecord
           end
         end
       end
+
+      # The driver raises fetch failures with rb_throw, so the message is the
+      # throw tag. Don't ask getErrormsg again: each call moves on to the next
+      # diag record, and Informix only ever has one, so a second call is empty.
+      def fetch_error(error)
+        return error unless error.is_a?(UncaughtThrowError)
+
+        RuntimeError.new(error.tag.to_s).tap { |e| e.set_backtrace(error.backtrace) }
+      end
+      private :fetch_error
 
       def normalize_null_predicates(sql)
         return sql unless sql.respond_to?(:gsub)
@@ -1723,7 +1780,7 @@ module ActiveRecord
           @lock.synchronize do
             begin
               cols = IBM_DB.resultCols(stmt)
-              results = fetch_data(stmt)
+              results = fetch_data(stmt, sql, binds)
             rescue UncaughtThrowError => e
               puts_log "result metadata race ignored in select: #{e.message}"
               cols = []
@@ -1747,6 +1804,18 @@ module ActiveRecord
         results
       end
 
+      # Informix SQLCODEs, mapped only when connected to Informix: DB2 uses
+      # -243..-245 for unrelated errors (sensitive cursors, ambiguous function).
+      INFORMIX_UNIQUE_SQLCODES = [-239, -268].freeze # unique index / unique constraint
+      INFORMIX_LOCKED_SQLCODE = -233                 # cannot read record locked by another user
+      # Could not position within a table / do a physical-order read / position
+      # via an index. A lock failure when the ISAM error is one of
+      # INFORMIX_LOCK_ISAM_CODES (record locked, file locked, deadlock, lock
+      # timeout), which the Informix ODBC build appends as "ISAM=n". Without an
+      # ISAM code (DRDA) they are assumed to be lock failures.
+      INFORMIX_POSITION_SQLCODES = [-243, -244, -245].freeze
+      INFORMIX_LOCK_ISAM_CODES = [-107, -113, -143, -154].freeze
+
       def translate_exception(exception, message:, sql:, binds:)
         puts_log "translate_exception - exception = #{exception}, message = #{message}"
         puts_log "translate_exception #{caller}"
@@ -1754,7 +1823,10 @@ module ActiveRecord
         sql_state = error_message[/SQLSTATE=([0-9A-Z]+)/i, 1]&.upcase
         sql_code = error_message[/SQLCODE=([-0-9]+)/i, 1]&.to_i
 
-        if sql_state == '23505' || sql_code == -803 || error_message.match?(/SQL0803N/i)
+        if (informix_error = informix_exception_class(sql_code, error_message))
+          puts_log "#{informix_error} exception (Informix SQLCODE #{sql_code})"
+          informix_error.new(message, sql: sql, binds: binds, connection_pool: @pool)
+        elsif sql_state == '23505' || sql_code == -803 || error_message.match?(/SQL0803N/i)
           puts_log 'RecordNotUnique exception'
           RecordNotUnique.new(message, sql: sql, binds: binds, connection_pool: @pool)
         elsif sql_state == '22003' || sql_code == -413 || error_message.match?(/SQL0413N/i)
@@ -1790,6 +1862,21 @@ module ActiveRecord
         end
       end
 
+      # Deadlock (ISAM -143) maps to LockWaitTimeout rather than Deadlocked:
+      # Informix rolls back only the failed statement, while Active Record
+      # treats Deadlocked (a TransactionRollbackError) as the whole
+      # transaction having been rolled back.
+      def informix_exception_class(sql_code, error_message)
+        return unless sql_code && @servertype.is_a?(IBM_IDS)
+        return RecordNotUnique if INFORMIX_UNIQUE_SQLCODES.include?(sql_code)
+        return LockWaitTimeout if sql_code == INFORMIX_LOCKED_SQLCODE
+        return unless INFORMIX_POSITION_SQLCODES.include?(sql_code)
+
+        isam_code = error_message[/ISAM=([-0-9]+)/, 1]&.to_i
+        LockWaitTimeout if isam_code.nil? || INFORMIX_LOCK_ISAM_CODES.include?(isam_code)
+      end
+      private :informix_exception_class
+
       # Re-run adapter translation for generic StatementInvalid emitted by the driver
       # so SQLSTATE/SQLCODE can map to specific ActiveRecord exceptions.
       def translate_exception_class(native_error, sql, binds)
@@ -1815,6 +1902,8 @@ module ActiveRecord
         rows = []
         @lock.synchronize do
           rows = @servertype.select_rows(nil, nil, raw_result, [])
+        rescue StandardError => e
+          raise translate_exception_class(fetch_error(e), nil, [])
         end
 
         ActiveRecord::Result.new(cols, rows)
@@ -2236,7 +2325,7 @@ module ActiveRecord
 
           if stmt and sql.strip.upcase.start_with?("SELECT")
             cols = IBM_DB.resultCols(stmt)
-            results = fetch_data(stmt) if stmt
+            results = fetch_data(stmt, sql, binds) if stmt
 
             puts_log "execute_without_logging columns = #{cols}"
             puts_log "execute_without_logging result = #{results}"
@@ -2350,7 +2439,7 @@ module ActiveRecord
           @lock.synchronize do
             begin
               cols = IBM_DB.resultCols(stmt)
-              results = fetch_data(stmt) if stmt
+              results = fetch_data(stmt, sql, binds) if stmt
             rescue UncaughtThrowError => e
               puts_log "result metadata race ignored in select_prepared: #{e.message}"
               cols = []
@@ -2390,7 +2479,7 @@ module ActiveRecord
         puts_log "raw_execute stmt = #{stmt}"
         if sql.strip.upcase.start_with?("SELECT") and stmt
           cols = IBM_DB.resultCols(stmt)
-          results = fetch_data(stmt)
+          results = fetch_data(stmt, sql)
 
           puts_log "execute columns = #{cols}"
           puts_log "execute result = #{results}"
@@ -4663,26 +4752,19 @@ To remove the column, the table must be dropped and recreated without the #{colu
         results = []
         # Fetches all the results available. IBM_DB.fetch_assoc(stmt) returns
         # an hash for each single record.
-        # The loop stops when there aren't any more valid records to fetch
-        begin
-          if @isAr3
-            while single_hash = IBM_DB.fetch_assoc(stmt)
-              # Add the record to the +results+ array
-              results <<  single_hash
-            end
-          else
-            while single_hash = IBM_DB.fetch_array(stmt)
-              # Add the record to the +results+ array
-              results <<  single_hash
-            end
+        # The loop stops when there aren't any more valid records to fetch.
+        # Driver fetch errors propagate: the adapter's fetch_data translates
+        # them and frees the statement.
+        if @isAr3
+          while single_hash = IBM_DB.fetch_assoc(stmt)
+            # Add the record to the +results+ array
+            results <<  single_hash
           end
-        rescue StandardError => e # Handle driver fetch errors
-          error_msg = IBM_DB.getErrormsg(stmt, IBM_DB::DB_STMT)
-          raise StatementInvalid, "Failed to retrieve data: #{error_msg}" if error_msg && !error_msg.empty?
-
-          error_msg = 'An unexpected error occurred during data retrieval'
-          error_msg += ": #{e.message}" unless e.message.empty?
-          raise error_msg
+        else
+          while single_hash = IBM_DB.fetch_array(stmt)
+            # Add the record to the +results+ array
+            results <<  single_hash
+          end
         end
         results
       end
@@ -4691,19 +4773,11 @@ To remove the column, the table must be dropped and recreated without the #{colu
         @adapter.puts_log 'select_rows'
         # Fetches all the results available. IBM_DB.fetch_array(stmt) returns
         # an array representing a row in a result set.
-        # The loop stops when there aren't any more valid records to fetch
-        begin
-          while single_array = IBM_DB.fetch_array(stmt)
-            # Add the array to results array
-            results << single_array
-          end
-        rescue StandardError => e # Handle driver fetch errors
-          error_msg = IBM_DB.getErrormsg(stmt, IBM_DB::DB_STMT)
-          raise StatementInvalid, "Failed to retrieve data: #{error_msg}" if error_msg && !error_msg.empty?
-
-          error_msg = 'An unexpected error occurred during data retrieval'
-          error_msg += ": #{e.message}" unless e.message.empty?
-          raise error_msg
+        # The loop stops when there aren't any more valid records to fetch.
+        # Driver fetch errors propagate (see #select).
+        while single_array = IBM_DB.fetch_array(stmt)
+          # Add the array to results array
+          results << single_array
         end
         results
       end
@@ -5491,9 +5565,19 @@ module Arel
         end
       end
 
-      # Locks are not supported in SQLite
-      def visit_Arel_Nodes_Lock(_o, collector)
-        collector
+      # Model.lock / lock! / with_lock: emit "FOR UPDATE" (or the string given
+      # to lock("...")) on Informix. Informix rejects FOR UPDATE on anything
+      # but a simple SELECT (ORDER BY, DISTINCT, aggregates, UNION, joins:
+      # error -365); FIRST/SKIP are fine, so lock! works.
+      #
+      # Under COMMITTED READ the update lock is released as soon as the cursor
+      # moves on or closes, unless the row was modified, so a locking read
+      # does not serialise writers on its own. Other servers keep the old
+      # behaviour (no lock clause).
+      def visit_Arel_Nodes_Lock(o, collector)
+        return collector unless @connection.servertype.instance_of?(ActiveRecord::ConnectionAdapters::IBM_IDS)
+
+        visit o.expr, collector
       end
 
     #Mtech fix for IDS

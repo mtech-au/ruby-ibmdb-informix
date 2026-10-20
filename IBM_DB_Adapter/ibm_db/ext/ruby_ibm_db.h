@@ -87,8 +87,15 @@ static inline char* ruby_ibm_db_str2cstr( VALUE str, long *len ) {
 #define RUBY_IBM_DB_API
 #endif
 
+/* Room for " ISAM=-nnnnnnnnnn", which the Informix build appends after SQLCODE */
+#ifdef IBM_DB_INFORMIX_ODBC
+#define DB2_ISAM_MSG_LEN 20
+#else
+#define DB2_ISAM_MSG_LEN 0
+#endif
+
 /* strlen(" SQLCODE=") added in */
-#define DB2_MAX_ERR_MSG_LEN (SQL_MAX_MESSAGE_LENGTH + SQL_SQLSTATE_SIZE + 10)
+#define DB2_MAX_ERR_MSG_LEN (SQL_MAX_MESSAGE_LENGTH + SQL_SQLSTATE_SIZE + 10 + DB2_ISAM_MSG_LEN)
 
 /*Used to find the type of resource and the error type required*/
 #define DB_ERRMSG       1
