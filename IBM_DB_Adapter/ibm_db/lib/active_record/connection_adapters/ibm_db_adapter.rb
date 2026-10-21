@@ -2721,7 +2721,12 @@ module ActiveRecord
       end
 
       def create_savepoint(name = current_savepoint_name)
-        internal_execute("SAVEPOINT #{name} ON ROLLBACK RETAIN CURSORS", "TRANSACTION")
+        # ON ROLLBACK RETAIN CURSORS is DB2-only; Informix rejects it with -201.
+        if @servertype.is_a?(IBM_IDS)
+          internal_execute("SAVEPOINT #{name}", "TRANSACTION")
+        else
+          internal_execute("SAVEPOINT #{name} ON ROLLBACK RETAIN CURSORS", "TRANSACTION")
+        end
       end
 
       def exec_rollback_to_savepoint(name = current_savepoint_name)
