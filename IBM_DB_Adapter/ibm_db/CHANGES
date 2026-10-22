@@ -1,5 +1,11 @@
 Change Log
 ==============
+2026/10/22 (mtech fork, IBM_DB adapter 5.7.0.2)
+  - Informix: savepoints send plain SAVEPOINT (ON ROLLBACK RETAIN CURSORS
+    is DB2-only and raised -201), so transaction(requires_new: true) works.
+  - Informix: string columns default to varchar(255) instead of
+    varchar(400), which raised -650.
+
 2026/10/20 (mtech fork, IBM_DB adapter 5.7.0.1)
   - A failed fetch raises instead of returning the error text as rows
     (select_value returned ":" for a locked row); fetch_row and long-data

@@ -253,6 +253,9 @@ conn = IBM_DB.connect(
 - `indexes(table)` never returns an index qualifier: the CSDK reports
   `INDEX_QUALIFIER` as NULL, so indexes are identified by name alone.
   Expression/functional index keys (no `COLUMN_NAME`) are omitted.
+- `string` columns default to `varchar(255)`, the Informix VARCHAR maximum.
+  An explicit `limit:` over 255 fails with -650; use `text` or a raw
+  `LVARCHAR(n)` column for longer strings.
 
 ## Troubleshooting runtime errors
 

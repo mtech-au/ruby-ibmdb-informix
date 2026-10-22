@@ -2721,7 +2721,12 @@ module ActiveRecord
       end
 
       def create_savepoint(name = current_savepoint_name)
-        internal_execute("SAVEPOINT #{name} ON ROLLBACK RETAIN CURSORS", "TRANSACTION")
+        # ON ROLLBACK RETAIN CURSORS is DB2-only; Informix rejects it with -201.
+        if @servertype.is_a?(IBM_IDS)
+          internal_execute("SAVEPOINT #{name}", "TRANSACTION")
+        else
+          internal_execute("SAVEPOINT #{name} ON ROLLBACK RETAIN CURSORS", "TRANSACTION")
+        end
       end
 
       def exec_rollback_to_savepoint(name = current_savepoint_name)
@@ -2882,7 +2887,8 @@ module ActiveRecord
       def native_database_types
         {
           primary_key: { name: @servertype.primary_key_definition(@start_id) },
-          string: { name: 'varchar', limit: 400 },
+          # Informix VARCHAR is capped at 255 bytes; varchar(400) fails with -650.
+          string: { name: 'varchar', limit: @servertype.is_a?(IBM_IDS) ? 255 : 400 },
           text: { name: 'clob' },
           integer: { name: 'integer' },
           float: { name: 'float' },
