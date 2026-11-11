@@ -1,5 +1,9 @@
 Change Log
 ==============
+2026/11/11 (mtech fork, IBM_DB adapter 5.7.0.3)
+  - Informix: Relation#distinct emits DISTINCT (it was silently dropped,
+    so .distinct queries returned duplicate rows).
+
 2026/10/22 (mtech fork, IBM_DB adapter 5.7.0.2)
   - Informix: savepoints send plain SAVEPOINT (ON ROLLBACK RETAIN CURSORS
     is DB2-only and raised -201), so transaction(requires_new: true) works.
