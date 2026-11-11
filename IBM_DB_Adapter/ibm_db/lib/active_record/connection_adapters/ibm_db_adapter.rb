@@ -5633,6 +5633,12 @@ module Arel
     # ── Custom core visitor that skips the SELECT keyword ──
     # (because we already wrote it above with SKIP/FIRST)
     def visit_Arel_Nodes_SelectCore_without_select(o, collector)
+      # DISTINCT goes after SKIP/FIRST on Informix: SELECT SKIP n FIRST m DISTINCT ...
+      if o.set_quantifier
+        collector = visit(o.set_quantifier, collector)
+        collector << ' '
+      end
+
       unless o.projections.empty?
         len = o.projections.length - 1
         o.projections.each_with_index do |x, i|
