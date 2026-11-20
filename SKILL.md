@@ -250,6 +250,20 @@ conn = IBM_DB.connect(
 - ANSI (non-Unicode) build only — wide-char (`SQLWCHAR`) entry points are
   deliberately not used; set `client_locale`/`db_locale` for non-default
   character sets.
+- Character data (CHAR/VARCHAR/LVARCHAR/TEXT values, column names, error
+  messages) is tagged with the encoding of the connection's CLIENT_LOCALE
+  codeset: `client_locale` (CLIENT_LOCALE=/CLOC= in the connection string),
+  else the `CLIENT_LOCALE` environment variable, else **UTF-8**. Note that the
+  CSDK's own default with no CLIENT_LOCALE is en_US.8859-1, so set
+  `client_locale` explicitly. With `Encoding.default_internal` set (Rails sets
+  it to UTF-8), values are transcoded to it. Binary columns (BYTE/BLOB) stay
+  ASCII-8BIT. Bound parameters are sent as their raw bytes, not transcoded, so
+  use a UTF-8 `client_locale` with UTF-8 Ruby strings.
+- An unrecognised CLIENT_LOCALE codeset makes the CSDK driver segfault inside
+  `IBM_DB.connect` (driver bug, not the gem); valid examples: `en_US.utf8`,
+  `en_US.8859-1`, `en_US.819`, `en_US.1252`.
+- BYTE column contents do not currently round-trip (they read back as zero
+  bytes of the right length).
 - `indexes(table)` never returns an index qualifier: the CSDK reports
   `INDEX_QUALIFIER` as NULL, so indexes are identified by name alone.
   Expression/functional index keys (no `COLUMN_NAME`) are omitted.
