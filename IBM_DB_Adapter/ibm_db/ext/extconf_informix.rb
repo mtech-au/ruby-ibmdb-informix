@@ -58,9 +58,14 @@ end
 # at gil_release_version.h and UNICODE_SUPPORT_VERSION_H stays undefined, selecting
 # the plain-SQLCHAR code paths throughout the extension. The CSDK driver's wide-char
 # (SQLWCHAR) behavior on Unix is version-dependent, so the W entry points are avoided.
-if RUBY_VERSION =~ /1.9/ || RUBY_VERSION =~ /2./ || RUBY_VERSION =~ /3./
-  create_header('gil_release_version.h')
-end
+# Character data is still tagged with the CLIENT_LOCALE encoding (see
+# _ruby_ibm_db_text_rstr in ibm_db.c).
+#
+# This used to be guarded by a RUBY_VERSION regex that did not match 4.x. That
+# made no difference to the compiled code (nothing tests GIL_RELEASE_VERSION_H,
+# and ibm_Ruby_Thread_Call never releases the GVL), but every supported Ruby
+# should build the same way.
+create_header('gil_release_version.h')
 
 unless have_header('infxcli.h')
   crash("infxcli.h not found under #{INFORMIX_INCLUDE}. Check your Informix CSDK installation.")

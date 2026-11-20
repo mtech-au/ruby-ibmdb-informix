@@ -241,6 +241,9 @@ struct _ibm_db_globals {
   char      __ruby_stmt_err_msg[DB2_MAX_ERR_MSG_LEN];
   char      __ruby_conn_err_state[SQL_SQLSTATE_SIZE + 1];
   char      __ruby_stmt_err_state[SQL_SQLSTATE_SIZE + 1];
+  /* Client encoding of the handle that last wrote __ruby_conn/stmt_err_msg */
+  int       __ruby_conn_err_enc_index;
+  int       __ruby_stmt_err_enc_index;
 #endif
 
 #ifdef PASE /* i5/OS ease of use turn off commit */

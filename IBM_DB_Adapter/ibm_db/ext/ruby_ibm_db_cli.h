@@ -114,6 +114,10 @@ typedef struct _conn_handle_struct {
      able to invalidate its children's hstmt to prevent a later
      SQLFreeHandle on a dangling handle (segfaults with Informix ODBC). */
   struct _stmt_handle_struct *first_child_stmt;
+
+  /* Ruby encoding index of character data returned on this connection (its
+     CLIENT_LOCALE codeset). Used by the ANSI (SQLCHAR) build only. */
+  int          client_enc_index;
 } conn_handle;
 
 typedef union {
@@ -182,6 +186,9 @@ typedef struct _stmt_handle_struct {
   struct _conn_handle_struct *parent_conn;
   struct _stmt_handle_struct *next_child_stmt;
   struct _stmt_handle_struct *prev_child_stmt;
+
+  /* Copied from the owning connection; see conn_handle.client_enc_index. */
+  int          client_enc_index;
 } stmt_handle;
 
 /* 
@@ -202,6 +209,7 @@ typedef struct _ibm_db_connect_args_struct {
   SQLSMALLINT       password_len;
   int           ctlg_conn;        /*Indicates if the connection is a cataloged connection or not*/
   SQLHANDLE     *hdbc;
+  int           client_enc_index; /* See conn_handle.client_enc_index */
 } connect_args;
 
 /* 
