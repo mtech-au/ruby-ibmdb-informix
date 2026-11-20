@@ -1,5 +1,11 @@
 Change Log
 ==============
+2026/11/20 (mtech fork, IBM_DB adapter 5.7.0.4)
+  - Informix ODBC: CHAR/VARCHAR/LVARCHAR values, column names and error
+    messages are tagged with the connection's CLIENT_LOCALE encoding
+    (UTF-8 when unset) instead of ASCII-8BIT; binary columns stay
+    ASCII-8BIT. JSON.generate no longer warns on non-ASCII text.
+
 2026/11/11 (mtech fork, IBM_DB adapter 5.7.0.3)
   - Informix: Relation#distinct emits DISTINCT (it was silently dropped,
     so .distinct queries returned duplicate rows).
